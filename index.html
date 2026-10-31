@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Remote Camera PWA</title>
   <link rel="manifest" href="./manifest.json">
 
   <style>
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       background: #000;
@@ -18,7 +19,9 @@
       justify-content: space-between;
       height: 100vh;
       overflow: hidden;
+      user-select: none;
     }
+    
     .viewfinder-container {
       position: relative;
       width: 100%;
@@ -26,7 +29,8 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: #050505;
+      background: #000;
+      overflow: hidden;
     }
     video {
       width: 100%;
@@ -34,25 +38,91 @@
       object-fit: cover;
     }
     canvas { display: none; }
-    
+
+    /* Focus Ring Animation */
+    .focus-ring {
+      position: absolute;
+      width: 60px;
+      height: 60px;
+      border: 2px solid #ffcc00;
+      border-radius: 50%;
+      transform: translate(-50%, -50%) scale(1.5);
+      opacity: 0;
+      pointer-events: none;
+      transition: transform 0.2s ease-out, opacity 0.2s ease-out;
+    }
+    .focus-ring.active {
+      transform: translate(-50%, -50%) scale(1);
+      opacity: 1;
+    }
+
+    /* Countdown Overlay */
+    .countdown-overlay {
+      position: absolute;
+      font-size: 96px;
+      font-weight: bold;
+      color: #fff;
+      text-shadow: 0 4px 20px rgba(0,0,0,0.8);
+      display: none;
+      pointer-events: none;
+    }
+
+    /* Controls Layout */
     .controls-overlay {
       position: absolute;
       bottom: 20px;
-      width: 90%;
-      max-width: 400px;
+      width: 92%;
+      max-width: 420px;
       background: rgba(0, 0, 0, 0.75);
-      backdrop-filter: blur(10px);
-      padding: 15px;
-      border-radius: 16px;
+      backdrop-filter: blur(12px);
+      padding: 16px;
+      border-radius: 20px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      box-sizing: border-box;
+      gap: 12px;
     }
+
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .icon-btn {
+      background: rgba(255, 255, 255, 0.15);
+      border: none;
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .icon-btn.active {
+      background: #ffcc00;
+      color: #000;
+    }
+
+    .slider-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      color: #ccc;
+    }
+    .slider-group label { min-width: 65px; }
+    input[type=range] {
+      flex-grow: 1;
+      accent-color: #007aff;
+    }
+
     .btn-row { display: flex; gap: 10px; }
-    button {
+    .main-btn {
       padding: 14px;
-      font-size: 15px;
+      font-size: 16px;
       font-weight: bold;
       border: none;
       border-radius: 50px;
@@ -62,33 +132,54 @@
       flex-grow: 1;
     }
     #installBtn { background: #34c759; display: none; }
-    #status { font-size: 12px; color: #ff9f0a; text-align: center; margin: 0; }
+    #status { font-size: 12px; color: #aaa; text-align: center; margin: 0; }
   </style>
 </head>
 <body>
 
   <div class="viewfinder-container" id="viewfinderWrapper">
     <video id="viewfinder" autoplay playsinline muted></video>
+    <div class="focus-ring" id="focusRing"></div>
+    <div class="countdown-overlay" id="countdown"></div>
     <canvas id="photoCanvas"></canvas>
   </div>
 
   <div class="controls-overlay">
-    <div class="btn-row">
-      <button id="snapBtn">📸 Take Photo</button>
-      <button id="installBtn">📲 Install App</button>
+    <!-- Top Bar: Flash, Camera Swap, Timer -->
+    <div class="top-bar">
+      <button class="icon-btn" id="flashBtn">⚡ Flash: Off</button>
+      <button class="icon-btn" id="timerBtn">⏱️ Timer: Off</button>
+      <button class="icon-btn" id="flipBtn">🔄 Flip Cam</button>
     </div>
-    <p id="status">Requesting camera access...</p>
+
+    <!-- Sliders: Zoom & Exposure -->
+    <div class="slider-group" id="zoomGroup" style="display:none;">
+      <label id="zoomLabel">Zoom: 1x</label>
+      <input type="range" id="zoomSlider" min="1" max="5" step="0.1" value="1">
+    </div>
+
+    <div class="slider-group" id="exposureGroup" style="display:none;">
+      <label id="expLabel">Bright: 0</label>
+      <input type="range" id="exposureSlider">
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="btn-row">
+      <button class="main-btn" id="snapBtn">📸 Take Photo</button>
+      <button class="main-btn" id="installBtn">📲 Install App</button>
+    </div>
+    <p id="status">Tap screen to activate audio & remote</p>
   </div>
 
   <audio id="silentAudio" loop src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="></audio>
 
   <script>
-    // 1. Register Service Worker for PWA compliance
+    // Service Worker
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(() => {});
     }
 
-    // 2. Install Prompt Handler
+    // PWA Install Handling
     let deferredPrompt;
     const installBtn = document.getElementById('installBtn');
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -104,105 +195,135 @@
       deferredPrompt = null;
     });
 
-    // 3. Fallback Camera Initializer
+    // Elements
     const video = document.getElementById('viewfinder');
     const canvas = document.getElementById('photoCanvas');
     const status = document.getElementById('status');
     const silentAudio = document.getElementById('silentAudio');
-    let audioCtx = null;
+    const focusRing = document.getElementById('focusRing');
+    const countdownEl = document.getElementById('countdown');
+
+    const flashBtn = document.getElementById('flashBtn');
+    const timerBtn = document.getElementById('timerBtn');
+    const flipBtn = document.getElementById('flipBtn');
+    const zoomGroup = document.getElementById('zoomGroup');
+    const zoomSlider = document.getElementById('zoomSlider');
+    const zoomLabel = document.getElementById('zoomLabel');
+    const exposureGroup = document.getElementById('exposureGroup');
+    const exposureSlider = document.getElementById('exposureSlider');
+    const expLabel = document.getElementById('expLabel');
+
+    // App State
     let activeStream = null;
+    let track = null;
+    let capabilities = null;
+    let audioCtx = null;
+    let currentFacingMode = "environment";
+    let torchState = false;
+    let timerSetting = 0; // 0, 3, or 10 seconds
+    let isCountingDown = false;
 
+    // 1. Camera Initialization
     async function initCamera() {
-      const constraintsToTry = [
-        { video: { facingMode: { ideal: "environment" } }, audio: false },
-        { video: { facingMode: "user" }, audio: false },
-        { video: true, audio: false }
-      ];
-
-      for (const constraints of constraintsToTry) {
-        try {
-          if (activeStream) {
-            activeStream.getTracks().forEach(track => track.stop());
-          }
-          activeStream = await navigator.mediaDevices.getUserMedia(constraints);
-          video.srcObject = activeStream;
-          
-          // Force playback on Android webview engine
-          await video.play();
-          
-          status.innerText = "Ready • Tap screen or press earbud";
-          return; // Success: exit function
-        } catch (err) {
-          console.warn("Constraint attempt failed:", constraints, err);
-        }
-      }
-
-      status.innerText = "Camera Access Blocked. Check site permissions.";
-    }
-
-    // 4. Shutter Sound Synthesizer
-    function playShutterSound() {
       try {
-        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(800, audioCtx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.08);
-        gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.08);
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.08);
-      } catch (e) {}
-    }
+        if (activeStream) {
+          activeStream.getTracks().forEach(t => t.stop());
+        }
 
-    // 5. Photo Capture
-    function takePhoto() {
-      if (!video.videoWidth || !video.videoHeight) {
-        status.innerText = "Error: Video stream not ready";
-        return;
-      }
-      
-      playShutterSound();
-      
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0);
+        activeStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: currentFacingMode } },
+          audio: false
+        });
 
-      const link = document.createElement('a');
-      link.href = canvas.toDataURL('image/jpeg', 0.95);
-      link.download = `photo_${Date.now()}.jpg`;
-      link.click();
-      
-      status.innerText = "✨ Photo Saved!";
-      setTimeout(() => {
-        if (video.paused) video.play().catch(() => {});
+        video.srcObject = activeStream;
+        await video.play();
+
+        track = activeStream.getVideoTracks()[0];
+        capabilities = track.getCapabilities ? track.getCapabilities() : {};
+
+        setupHardwareControls();
         status.innerText = "Ready • Press earbud to snap";
-      }, 1500);
+      } catch (err) {
+        status.innerText = "Camera Error: " + err.message;
+      }
     }
 
-    document.getElementById('snapBtn').onclick = takePhoto;
+    // 2. Configure Zoom, Exposure & Flash Capabilities
+    function setupHardwareControls() {
+      // Zoom
+      if (capabilities.zoom) {
+        zoomGroup.style.display = 'flex';
+        zoomSlider.min = capabilities.zoom.min;
+        zoomSlider.max = capabilities.zoom.max;
+        zoomSlider.step = capabilities.zoom.step;
+        zoomSlider.value = track.getSettings().zoom || capabilities.zoom.min;
+        zoomLabel.innerText = `Zoom: ${parseFloat(zoomSlider.value).toFixed(1)}x`;
 
-    // 6. Media Key Session Listener
-    document.body.addEventListener('click', () => {
-      silentAudio.play().catch(() => {});
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (video.paused) video.play().catch(() => {});
-    }, { once: true });
+        zoomSlider.oninput = async () => {
+          const val = parseFloat(zoomSlider.value);
+          zoomLabel.innerText = `Zoom: ${val.toFixed(1)}x`;
+          await track.applyConstraints({ advanced: [{ zoom: val }] });
+        };
+      } else {
+        zoomGroup.style.display = 'none';
+      }
 
-    if ('mediaSession' in navigator) {
-      navigator.mediaSession.setActionHandler('play', takePhoto);
-      navigator.mediaSession.setActionHandler('pause', takePhoto);
-      navigator.mediaSession.setActionHandler('previoustrack', takePhoto);
-      navigator.mediaSession.setActionHandler('nexttrack', takePhoto);
+      // Exposure / Brightness
+      if (capabilities.exposureCompensation) {
+        exposureGroup.style.display = 'flex';
+        exposureSlider.min = capabilities.exposureCompensation.min;
+        exposureSlider.max = capabilities.exposureCompensation.max;
+        exposureSlider.step = capabilities.exposureCompensation.step;
+        exposureSlider.value = track.getSettings().exposureCompensation || 0;
+        expLabel.innerText = `Bright: ${exposureSlider.value}`;
+
+        exposureSlider.oninput = async () => {
+          const val = parseFloat(exposureSlider.value);
+          expLabel.innerText = `Bright: ${val > 0 ? '+' + val : val}`;
+          await track.applyConstraints({ advanced: [{ exposureCompensation: val }] });
+        };
+      } else {
+        exposureGroup.style.display = 'none';
+      }
+
+      // Torch / Flash
+      if (capabilities.torch) {
+        flashBtn.style.display = 'flex';
+        torchState = false;
+        flashBtn.classList.remove('active');
+        flashBtn.innerText = '⚡ Flash: Off';
+      } else {
+        flashBtn.style.display = 'none';
+      }
     }
 
-    // Launch camera stream
-    initCamera();
-  </script>
-</body>
-</html>
+    // Flash Toggle
+    flashBtn.onclick = async () => {
+      if (!track || !capabilities.torch) return;
+      torchState = !torchState;
+      try {
+        await track.applyConstraints({ advanced: [{ torch: torchState }] });
+        flashBtn.classList.toggle('active', torchState);
+        flashBtn.innerText = torchState ? '⚡ Flash: ON' : '⚡ Flash: Off';
+      } catch (e) {}
+    };
+
+    // Camera Flip (Front / Back)
+    flipBtn.onclick = () => {
+      currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
+      initCamera();
+    };
+
+    // Timer Toggle (Off -> 3s -> 10s)
+    timerBtn.onclick = () => {
+      if (timerSetting === 0) {
+        timerSetting = 3;
+        timerBtn.innerText = '⏱️ Timer: 3s';
+        timerBtn.classList.add('active');
+      } else if (timerSetting === 3) {
+        timerSetting = 10;
+        timerBtn.innerText = '⏱️ Timer: 10s';
+        timerBtn.classList.add('active');
+      } else {
+        timerSetting = 0;
+        timerBtn.innerText = '⏱️
