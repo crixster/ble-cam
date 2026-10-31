@@ -205,16 +205,13 @@
     </div>
 
     <div class="lens-bar">
-      <button class="lens-btn" data-zoom="0.6">0.6x</button>
       <button class="lens-btn active" data-zoom="1">1x</button>
       <button class="lens-btn" data-zoom="2">2x</button>
-      <button class="lens-btn" data-zoom="5">5x</button>
-      <button class="lens-btn" data-zoom="10">10x</button>
     </div>
 
     <div class="slider-group">
       <label id="zoomLabel">Zoom: 1.0x</label>
-      <input type="range" id="zoomSlider" min="0.6" max="10" step="0.1" value="1">
+      <input type="range" id="zoomSlider" min="1" max="10" step="0.1" value="1">
     </div>
 
     <div class="slider-group">
@@ -232,12 +229,10 @@
   <audio id="silentAudio" loop src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="></audio>
 
   <script>
-    // Service Worker Registration
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(() => {});
     }
 
-    // PWA Install Handling
     let deferredPrompt;
     const installBtn = document.getElementById('installBtn');
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -253,7 +248,6 @@
       deferredPrompt = null;
     });
 
-    // Elements
     const video = document.getElementById('viewfinder');
     const canvas = document.getElementById('photoCanvas');
     const status = document.getElementById('status');
@@ -272,48 +266,34 @@
     const expLabel = document.getElementById('expLabel');
     const lensButtons = document.querySelectorAll('.lens-btn');
 
-    // App State
     let activeStream = null;
     let track = null;
     let capabilities = null;
     let audioCtx = null;
     let currentFacingMode = "environment";
-    let flashMode = 0; // 0: Off, 1: Flash ON, 2: Light Always-On
-    let timerSetting = 0; // 0, 3, or 10 seconds
+    let flashMode = 0; 
+    let timerSetting = 0; 
     let isCountingDown = false;
-    let currentZoomVal = 1.0; // Track current zoom for software fallback canvas mapping
 
-    // Tunable constants for torch settling, timer pause, and brightness sampling
-    const TORCH_SETTLE_MS = 1000;         // Extended max wait for dark room auto-exposure (AE) stabilization
-    const TORCH_BRIGHTNESS_TIMEOUT = 1200;// Timeout safeguard for brightness sampling loop
-    const COUNTDOWN_PULSE_MS = 130;       // Duration of torch pulse per remaining countdown second
-    const TIMER_TO_CAPTURE_PAUSE = 400;   // Pause duration after countdown blinks stop before flash/capture
+    const TORCH_SETTLE_MS = 800;          // Wait for sensor AE to adjust to LED
+    const COUNTDOWN_PULSE_MS = 130;       
+    const TIMER_TO_CAPTURE_PAUSE = 400;   
 
-    /**
-     * Serialized torch helper: queues and awaits torch state changes to prevent race conditions
-     * between countdown blinks, timer states, and capture sequences. Tracks internal state to make no-ops cheap.
-     * Caveat: Front cameras generally do not expose torch capabilities; calls are safely short-circuited.
-     */
     let torchQueue = Promise.resolve();
     let internalTorchState = false;
 
     function setTorch(on) {
       torchQueue = torchQueue.then(async () => {
-        if (!track || !capabilities || !capabilities.torch || currentFacingMode === 'user') {
-          return;
-        }
+        if (!track || !capabilities || !capabilities.torch || currentFacingMode === 'user') return;
         if (internalTorchState === on) return;
         try {
           await track.applyConstraints({ advanced: [{ torch: on }] });
           internalTorchState = on;
-        } catch (e) {
-          console.warn("Torch constraint failed:", e);
-        }
+        } catch (e) {}
       });
       return torchQueue;
     }
 
-    // 1. Camera Initialization
     async function initCamera() {
       try {
         if (activeStream) {
@@ -333,10 +313,15 @@
         internalTorchState = false;
 
         if (capabilities.zoom) {
-          zoomSlider.min = capabilities.zoom.min;
-          zoomSlider.max = capabilities.zoom.max;
+          zoomSlider.min = capabilities.zoom.min; // Should be 1.0
+          zoomSlider.max = Math.min(10, capabilities.zoom.max); // Cap at 10x
           zoomSlider.step = capabilities.zoom.step;
+        } else {
+          zoomSlider.min = 1;
+          zoomSlider.max = 1; // Disable slider if hardware zoom isn't supported
         }
+
+        applyZoom(1);
 
         if (flashMode === 2 && capabilities.torch) {
           await setTorch(true);
@@ -348,17 +333,14 @@
       }
     }
 
-    /**
-     * Applies zoom level val (supporting 0.6x software ultra-wide fallback via CSS transform).
-     * Updates active lens presets and UI slider accordingly.
-     */
+    // STRICT HARDWARE ZOOM
     async function applyZoom(val) {
-      currentZoomVal = val;
+      val = parseFloat(val);
       zoomSlider.value = val;
-      zoomLabel.innerText = `Zoom: ${parseFloat(val).toFixed(1)}x`;
+      zoomLabel.innerText = `Zoom: ${val.toFixed(1)}x`;
 
       lensButtons.forEach(btn => {
-        if (parseFloat(btn.dataset.zoom) === parseFloat(val)) {
+        if (parseFloat(btn.dataset.zoom) === val) {
           btn.classList.add('active');
         } else {
           btn.classList.remove('active');
@@ -366,32 +348,21 @@
       });
 
       try {
-        if (val < 1.0) {
-          // Software ultra-wide fallback via CSS scale transform
-          video.style.transform = `scale(${val})`;
-        } else if (capabilities.zoom && val >= capabilities.zoom.min && val <= capabilities.zoom.max) {
-          await track.applyConstraints({ advanced: [{ zoom: val }] });
-          video.style.transform = 'scale(1)';
-        } else {
-          video.style.transform = `scale(${val})`;
+        if (track && capabilities.zoom) {
+          const clampedVal = Math.max(capabilities.zoom.min, Math.min(capabilities.zoom.max, val));
+          await track.applyConstraints({ advanced: [{ zoom: clampedVal }] });
         }
       } catch (e) {
-        video.style.transform = `scale(${val})`;
+        console.warn("Hardware zoom failed", e);
       }
     }
 
     lensButtons.forEach(btn => {
-      btn.onclick = () => {
-        const val = parseFloat(btn.dataset.zoom);
-        applyZoom(val);
-      };
+      btn.onclick = () => applyZoom(parseFloat(btn.dataset.zoom));
     });
 
-    zoomSlider.oninput = () => {
-      applyZoom(parseFloat(zoomSlider.value));
-    };
+    zoomSlider.oninput = () => applyZoom(parseFloat(zoomSlider.value));
 
-    // Flash Mode Cycling (Off -> Flash ON -> Light Always-On)
     flashBtn.onclick = async () => {
       flashMode = (flashMode + 1) % 3;
       
@@ -418,7 +389,6 @@
 
     flipBtn.onclick = () => {
       currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
-      applyZoom(1);
       initCamera();
     };
 
@@ -457,11 +427,7 @@
       }
     });
 
-    /**
-     * Synthesizes an authentic DSLR mechanical shutter sound using Web Audio API filtered noise buffers.
-     * Mimics a two-stage DSLR mirror slap and shutter close matching reference https://youtu.be/iMI6yys_yKo.
-     * Caveat: Relies on user gesture activation to unlock AudioContext playback in mobile browsers.
-     */
+    // REDESIGNED MECHANICAL SHUTTER SOUND
     function playDslrShutterSound() {
       try {
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -469,50 +435,57 @@
 
         const now = audioCtx.currentTime;
 
-        function createNoiseClick(startTime, duration, centerFreq, qVal, peakGain) {
+        // Helper: Creates a mechanical click using noise + low-frequency thud
+        function playMechanicalClick(startTime, noiseFreq, duration, gainMult) {
+          // 1. High-frequency filtered noise (the physical "clack" of plastic/metal)
           const bufferSize = audioCtx.sampleRate * duration;
           const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
           const data = buffer.getChannelData(0);
-          for (let i = 0; i < bufferSize; i++) {
-            data[i] = Math.random() * 2 - 1;
-          }
+          for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+          
+          const noise = audioCtx.createBufferSource();
+          noise.buffer = buffer;
 
-          const source = audioCtx.createBufferSource();
-          source.buffer = buffer;
+          const noiseFilter = audioCtx.createBiquadFilter();
+          noiseFilter.type = 'highpass';
+          noiseFilter.frequency.value = noiseFreq;
 
-          const filter = audioCtx.createBiquadFilter();
-          filter.type = 'bandpass';
-          filter.frequency.setValueAtTime(centerFreq, startTime);
-          filter.Q.setValueAtTime(qVal, startTime);
+          const noiseGain = audioCtx.createGain();
+          noiseGain.gain.setValueAtTime(gainMult, startTime);
+          noiseGain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
 
-          const gain = audioCtx.createGain();
-          gain.gain.setValueAtTime(peakGain, startTime);
-          gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+          noise.connect(noiseFilter);
+          noiseFilter.connect(noiseGain);
+          noiseGain.connect(audioCtx.destination);
+          
+          // 2. Low-frequency oscillator (the heavy "thud" of the mirror moving)
+          const osc = audioCtx.createOscillator();
+          const oscGain = audioCtx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(120, startTime);
+          osc.frequency.exponentialRampToValueAtTime(40, startTime + duration);
+          
+          oscGain.gain.setValueAtTime(gainMult * 0.8, startTime);
+          oscGain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
 
-          source.connect(filter);
-          filter.connect(gain);
-          gain.connect(audioCtx.destination);
+          osc.connect(oscGain);
+          oscGain.connect(audioCtx.destination);
 
-          source.start(startTime);
-          source.stop(startTime + duration);
+          noise.start(startTime);
+          noise.stop(startTime + duration);
+          osc.start(startTime);
+          osc.stop(startTime + duration);
         }
 
-        // Click 1 (Mirror slap): Very short (6ms), high frequency (~4500 Hz)
-        createNoiseClick(now, 0.006, 4500, 3, 0.9);
+        // 1st Click: Mirror slaps up (Sharp, bright, very short)
+        playMechanicalClick(now, 2500, 0.015, 0.8);
+        
+        // 2nd Click: Shutter closes (Slightly lower tone, 60ms later)
+        playMechanicalClick(now + 0.065, 1500, 0.025, 0.6);
 
-        // Click 2 (Shutter close): Occurring ~70ms after click 1, lower frequency (~2000 Hz), slightly softer amplitude
-        createNoiseClick(now + 0.07, 0.03, 2000, 3, 0.55);
-
-      } catch (e) {
-        console.warn("Audio playback failed:", e);
-      }
+      } catch (e) {}
     }
 
-    /**
-     * Executes the LED torch countdown blink sequence.
-     * Pulses the torch on for each remaining second. When countdown finishes, ensures LED is OFF
-     * and waits for TIMER_TO_CAPTURE_PAUSE before triggering capture.
-     */
     async function runCountdownBlink(seconds) {
       const hasTorch = track && capabilities && capabilities.torch && currentFacingMode === 'environment';
 
@@ -524,8 +497,7 @@
           await setTorch(true);
           await new Promise(r => setTimeout(r, COUNTDOWN_PULSE_MS));
           await setTorch(false);
-          const remainder = 1000 - COUNTDOWN_PULSE_MS;
-          await new Promise(r => setTimeout(r, remainder));
+          await new Promise(r => setTimeout(r, 1000 - COUNTDOWN_PULSE_MS));
         } else {
           screenFlash.classList.add('active');
           setTimeout(() => screenFlash.classList.remove('active'), COUNTDOWN_PULSE_MS);
@@ -535,10 +507,7 @@
 
       countdownEl.style.display = 'none';
 
-      // Ensure LED is strictly OFF and wait for required clear pause before flash/capture sequence
-      if (hasTorch) {
-        await setTorch(false);
-      }
+      if (hasTorch) await setTorch(false);
       await new Promise(r => setTimeout(r, TIMER_TO_CAPTURE_PAUSE));
     }
 
@@ -556,81 +525,34 @@
       }
     }
 
-    /**
-     * Executes the final photo capture sequence with serialized torch control, dark-room exposure stabilization
-     * (sampling average brightness or waiting for TORCH_SETTLE_MS), 0.6x ultra-wide canvas scaling, and finally block restoration.
-     */
+    // FLASH FIXED: Relies on a solid hardware delay rather than buggy brightness sampling
     async function executeCaptureSequence() {
       const isFlashOn = (flashMode === 1);
       const isAlwaysOn = (flashMode === 2);
       const hasTorch = track && capabilities && capabilities.torch && currentFacingMode === 'environment';
 
       try {
-        if (isFlashOn || isAlwaysOn) {
-          if (hasTorch) {
-            await setTorch(true);
-            
-            // Dark Room Exposure Stabilization: wait for sensor auto-exposure (AE) using brightness sampling or timeout safeguard
-            const sampleCanvas = document.createElement('canvas');
-            sampleCanvas.width = 64;
-            sampleCanvas.height = 64;
-            const sampleCtx = sampleCanvas.getContext('2d');
-            
-            const startTime = performance.now();
-            let stabilized = false;
-            let lastBrightness = -1;
-
-            while ((performance.now() - startTime) < TORCH_BRIGHTNESS_TIMEOUT) {
-              await new Promise(r => setTimeout(r, 60));
-              try {
-                sampleCtx.drawImage(video, 0, 0, 64, 64);
-                const imgData = sampleCtx.getImageData(0, 0, 64, 64).data;
-                let sum = 0;
-                for (let i = 0; i < imgData.length; i += 4) {
-                  sum += (imgData[i] * 0.299 + imgData[i+1] * 0.587 + imgData[i+2] * 0.114);
-                }
-                const avgBrightness = sum / (64 * 64);
-
-                if (lastBrightness !== -1 && Math.abs(avgBrightness - lastBrightness) < 1.5) {
-                  stabilized = true;
-                  break;
-                }
-                lastBrightness = avgBrightness;
-              } catch (err) {
-                break;
-              }
-            }
-
-            if (!stabilized) {
-              // Fallback explicit settle delay if sampling loop timed out
-              await new Promise(r => setTimeout(r, TORCH_SETTLE_MS));
-            }
-          }
+        if ((isFlashOn || isAlwaysOn) && hasTorch) {
+          await setTorch(true);
+          // Delay to allow physical LED to turn on AND the Android sensor's Auto Exposure
+          // to actually update the video stream. Without this, drawImage captures a black frame.
+          await new Promise(r => setTimeout(r, TORCH_SETTLE_MS));
         }
 
+        // Trigger screen flash overlay + sound (slight overlap with actual capture)
         screenFlash.classList.add('active');
         setTimeout(() => screenFlash.classList.remove('active'), 120);
-
         playDslrShutterSound();
 
-        // Canvas Capture with 0.6x Ultra-Wide Software Fallback Scaling support
+        // Capture Frame
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         const ctx = canvas.getContext('2d');
         ctx.filter = video.style.filter || 'none';
+        
+        ctx.drawImage(video, 0, 0);
 
-        if (currentZoomVal < 1.0) {
-          // Center-crop / scale canvas when 0.6x software zoom is active to reflect wider FOV
-          ctx.save();
-          ctx.translate(canvas.width / 2, canvas.height / 2);
-          ctx.scale(currentZoomVal, currentZoomVal);
-          ctx.translate(-canvas.width / 2, -canvas.height / 2);
-          ctx.drawImage(video, 0, 0);
-          ctx.restore();
-        } else {
-          ctx.drawImage(video, 0, 0);
-        }
-
+        // Download
         const link = document.createElement('a');
         link.href = canvas.toDataURL('image/jpeg', 0.95);
         link.download = `photo_${Date.now()}.jpg`;
