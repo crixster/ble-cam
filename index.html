@@ -20,7 +20,6 @@
       user-select: none;
     }
     
-    /* Fullscreen background video viewfinder */
     #viewfinderWrapper {
       position: absolute;
       top: 0;
@@ -37,7 +36,23 @@
     }
     canvas { display: none; }
 
-    /* Focus Ring Animation */
+    /* Flash Screen Simulation Flash Effect */
+    .screen-flash {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #fff;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 15;
+      transition: opacity 0.1s ease-out;
+    }
+    .screen-flash.active {
+      opacity: 0.8;
+    }
+
     .focus-ring {
       position: absolute;
       width: 60px;
@@ -55,7 +70,6 @@
       opacity: 1;
     }
 
-    /* Countdown Overlay */
     .countdown-overlay {
       position: absolute;
       top: 40%;
@@ -70,7 +84,6 @@
       z-index: 10;
     }
 
-    /* Floating Controls Overlay - Guaranteed to stay visible on screen */
     .controls-overlay {
       position: absolute;
       bottom: 20px;
@@ -153,36 +166,32 @@
 </head>
 <body>
 
-  <!-- Fullscreen Viewfinder -->
   <div id="viewfinderWrapper">
     <video id="viewfinder" autoplay playsinline muted></video>
+    <div class="screen-flash" id="screenFlash"></div>
     <div class="focus-ring" id="focusRing"></div>
     <div class="countdown-overlay" id="countdown"></div>
     <canvas id="photoCanvas"></canvas>
   </div>
 
-  <!-- Floating Control Panel -->
   <div class="controls-overlay">
-    <!-- Top Bar: Torch, Timer, Flip -->
+    <!-- Top Bar: Flash Mode, Timer, Flip -->
     <div class="top-bar">
-      <button class="icon-btn" id="flashBtn">⚡ Torch</button>
+      <button class="icon-btn" id="flashBtn">⚡ Flash: Off</button>
       <button class="icon-btn" id="timerBtn">⏱️ Timer</button>
       <button class="icon-btn" id="flipBtn">🔄 Flip</button>
     </div>
 
-    <!-- Software/Hardware Zoom Slider -->
     <div class="slider-group">
       <label id="zoomLabel">Zoom: 1.0x</label>
       <input type="range" id="zoomSlider" min="1" max="4" step="0.1" value="1">
     </div>
 
-    <!-- Brightness Slider -->
     <div class="slider-group">
       <label id="expLabel">Bright: 0%</label>
       <input type="range" id="exposureSlider" min="50" max="150" step="1" value="100">
     </div>
 
-    <!-- Action Buttons -->
     <div class="btn-row">
       <button class="main-btn" id="snapBtn">📸 Take Photo</button>
       <button class="main-btn" id="installBtn">📲 Install App</button>
@@ -222,6 +231,7 @@
     const focusRing = document.getElementById('focusRing');
     const countdownEl = document.getElementById('countdown');
     const viewfinderWrapper = document.getElementById('viewfinderWrapper');
+    const screenFlash = document.getElementById('screenFlash');
 
     const flashBtn = document.getElementById('flashBtn');
     const timerBtn = document.getElementById('timerBtn');
@@ -237,7 +247,7 @@
     let capabilities = null;
     let audioCtx = null;
     let currentFacingMode = "environment";
-    let torchState = false;
+    let flashMode = 0; // 0: Off, 1: On, 2: Auto
     let timerSetting = 0; // 0, 3, or 10 seconds
     let isCountingDown = false;
 
@@ -265,7 +275,30 @@
       }
     }
 
-    // 2. Zoom & Brightness Sliders
+    // 2. Flash Mode Cycling (Off -> On -> Auto)
+    flashBtn.onclick = () => {
+      flashMode = (flashMode + 1) % 3;
+      if (flashMode === 0) {
+        flashBtn.innerText = "⚡ Flash: Off";
+        flashBtn.classList.remove('active');
+      } else if (flashMode === 1) {
+        flashBtn.innerText = "⚡ Flash: ON";
+        flashBtn.classList.add('active');
+      } else {
+        flashBtn.innerText = "⚡ Flash: Auto";
+        flashBtn.classList.add('active');
+      }
+    };
+
+    // Helper to fire actual hardware flash / torch pulse during capture if enabled
+    async function handleHardwareFlash(enable) {
+      if (!track || !capabilities.torch) return;
+      try {
+        await track.applyConstraints({ advanced: [{ torch: enable }] });
+      } catch (e) {}
+    }
+
+    // Zoom & Brightness Sliders
     zoomSlider.oninput = async () => {
       const val = parseFloat(zoomSlider.value);
       zoomLabel.innerText = `Zoom: ${val.toFixed(1)}x`;
@@ -284,21 +317,6 @@
       const val = parseInt(exposureSlider.value);
       expLabel.innerText = `Bright: ${val}%`;
       video.style.filter = `brightness(${val}%)`;
-    };
-
-    // Torch / Flash Toggle
-    flashBtn.onclick = async () => {
-      if (!track || !capabilities.torch) {
-        status.innerText = "Torch not supported on this sensor";
-        setTimeout(() => status.innerText = "Ready", 2000);
-        return;
-      }
-      torchState = !torchState;
-      try {
-        await track.applyConstraints({ advanced: [{ torch: torchState }] });
-        flashBtn.classList.toggle('active', torchState);
-        flashBtn.innerText = torchState ? '⚡ Torch ON' : '⚡ Torch';
-      } catch (e) {}
     };
 
     // Camera Flip (Front / Back)
@@ -329,7 +347,6 @@
 
     // 3. Tap to Focus
     viewfinderWrapper.addEventListener('click', async (e) => {
-      // Don't trigger focus if user taps inside control panel overlay
       if (e.target.closest('.controls-overlay')) return;
 
       const rect = viewfinderWrapper.getBoundingClientRect();
@@ -348,22 +365,53 @@
       }
     });
 
-    // 4. Shutter Sound Synthesizer
-    function playShutterSound() {
+    // 4. Authentic Synthesized Camera Snap Sound
+    function playCameraSnapSound() {
       try {
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         if (audioCtx.state === 'suspended') audioCtx.resume();
+
+        const now = audioCtx.currentTime;
+
+        // Layer 1: Mechanical Mirror/Click Thump
         const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
+        const gainNode = audioCtx.createGain();
         osc.type = 'triangle';
-        osc.frequency.setValueAtTime(800, audioCtx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.08);
-        gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.08);
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.08);
+        osc.frequency.setValueAtTime(320, now);
+        osc.frequency.exponentialRampToValueAtTime(40, now + 0.04);
+        gainNode.gain.setValueAtTime(0.6, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+        osc.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 0.04);
+
+        // Layer 2: Shutter Blade Iris Snap (White noise burst)
+        const bufferSize = audioCtx.sampleRate * 0.06; // 60ms snap
+        const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+
+        const noise = audioCtx.createBufferSource();
+        noise.buffer = buffer;
+
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(1800, now);
+        filter.Q.setValueAtTime(3, now);
+
+        const noiseGain = audioCtx.createGain();
+        noiseGain.gain.setValueAtTime(0.7, now);
+        noiseGain.gain.exponentialRampToValueAtTime(0.01, now + 0.06);
+
+        noise.connect(filter);
+        filter.connect(noiseGain);
+        noiseGain.connect(audioCtx.destination);
+
+        noise.start(now);
+        noise.stop(now + 0.06);
       } catch (e) {}
     }
 
@@ -385,22 +433,38 @@
             clearInterval(timerInterval);
             countdownEl.style.display = 'none';
             isCountingDown = false;
-            savePhoto();
+            executeCaptureSequence();
           }
         }, 1000);
       } else {
-        savePhoto();
+        executeCaptureSequence();
       }
     }
 
-    function savePhoto() {
-      playShutterSound();
+    async function executeCaptureSequence() {
+      // Trigger flash if enabled (On, or Auto trigger simulation)
+      const useFlash = (flashMode === 1);
+      if (useFlash) {
+        await handleHardwareFlash(true);
+      }
 
+      // Visual screen blink flash effect
+      screenFlash.classList.add('active');
+      setTimeout(() => screenFlash.classList.remove('active'), 100);
+
+      // Play authentic mechanical snap sound
+      playCameraSnapSound();
+
+      // Draw photo to canvas
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
       ctx.filter = video.style.filter || 'none';
       ctx.drawImage(video, 0, 0);
+
+      if (useFlash) {
+        await handleHardwareFlash(false);
+      }
 
       const link = document.createElement('a');
       link.href = canvas.toDataURL('image/jpeg', 0.95);
