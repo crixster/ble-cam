@@ -281,11 +281,13 @@
     let flashMode = 0; // 0: Off, 1: Flash ON, 2: Light Always-On
     let timerSetting = 0; // 0, 3, or 10 seconds
     let isCountingDown = false;
+    let currentZoomVal = 1.0; // Track current zoom for software fallback canvas mapping
 
-    // Tunable constants for torch settling and timer blink cadence
-    const TORCH_SETTLE_MS = 250;      // Settle delay for LED hardware state and auto-exposure stabilization
-    const COUNTDOWN_PULSE_MS = 130;   // Duration of torch pulse per remaining countdown second
-    const DOUBLE_BLINK_MS = 70;       // Duration of each blink in the pre-snap rapid double blink
+    // Tunable constants for torch settling, timer pause, and brightness sampling
+    const TORCH_SETTLE_MS = 1000;         // Extended max wait for dark room auto-exposure (AE) stabilization
+    const TORCH_BRIGHTNESS_TIMEOUT = 1200;// Timeout safeguard for brightness sampling loop
+    const COUNTDOWN_PULSE_MS = 130;       // Duration of torch pulse per remaining countdown second
+    const TIMER_TO_CAPTURE_PAUSE = 400;   // Pause duration after countdown blinks stop before flash/capture
 
     /**
      * Serialized torch helper: queues and awaits torch state changes to prevent race conditions
@@ -328,7 +330,7 @@
 
         track = activeStream.getVideoTracks()[0];
         capabilities = track.getCapabilities ? track.getCapabilities() : {};
-        internalTorchState = false; // Reset on new stream
+        internalTorchState = false;
 
         if (capabilities.zoom) {
           zoomSlider.min = capabilities.zoom.min;
@@ -346,7 +348,12 @@
       }
     }
 
+    /**
+     * Applies zoom level val (supporting 0.6x software ultra-wide fallback via CSS transform).
+     * Updates active lens presets and UI slider accordingly.
+     */
     async function applyZoom(val) {
+      currentZoomVal = val;
       zoomSlider.value = val;
       zoomLabel.innerText = `Zoom: ${parseFloat(val).toFixed(1)}x`;
 
@@ -359,7 +366,10 @@
       });
 
       try {
-        if (capabilities.zoom && val >= capabilities.zoom.min && val <= capabilities.zoom.max) {
+        if (val < 1.0) {
+          // Software ultra-wide fallback via CSS scale transform
+          video.style.transform = `scale(${val})`;
+        } else if (capabilities.zoom && val >= capabilities.zoom.min && val <= capabilities.zoom.max) {
           await track.applyConstraints({ advanced: [{ zoom: val }] });
           video.style.transform = 'scale(1)';
         } else {
@@ -449,7 +459,7 @@
 
     /**
      * Synthesizes an authentic DSLR mechanical shutter sound using Web Audio API filtered noise buffers.
-     * Generates a primary percussive mirror slap followed by a secondary mechanical click body, decaying exponentially.
+     * Mimics a two-stage DSLR mirror slap and shutter close matching reference https://youtu.be/iMI6yys_yKo.
      * Caveat: Relies on user gesture activation to unlock AudioContext playback in mobile browsers.
      */
     function playDslrShutterSound() {
@@ -487,11 +497,11 @@
           source.stop(startTime + duration);
         }
 
-        // First click (mirror/shutter blade): ~12ms, bright (~4000Hz)
-        createNoiseClick(now, 0.012, 4000, 3, 0.8);
+        // Click 1 (Mirror slap): Very short (6ms), high frequency (~4500 Hz)
+        createNoiseClick(now, 0.006, 4500, 3, 0.9);
 
-        // Second click (mechanical body body): ~35ms starting 75ms later, lower center freq (~1800Hz)
-        createNoiseClick(now + 0.075, 0.035, 1800, 2.5, 0.5);
+        // Click 2 (Shutter close): Occurring ~70ms after click 1, lower frequency (~2000 Hz), slightly softer amplitude
+        createNoiseClick(now + 0.07, 0.03, 2000, 3, 0.55);
 
       } catch (e) {
         console.warn("Audio playback failed:", e);
@@ -499,9 +509,9 @@
     }
 
     /**
-     * Executes the LED torch countdown blink sequence and pre-snap rapid double blink.
-     * Pulses the torch on for each remaining second, then performs a rapid double blink before capture.
-     * Falls back to CSS screen flashes if torch is unavailable or front camera is active.
+     * Executes the LED torch countdown blink sequence.
+     * Pulses the torch on for each remaining second. When countdown finishes, ensures LED is OFF
+     * and waits for TIMER_TO_CAPTURE_PAUSE before triggering capture.
      */
     async function runCountdownBlink(seconds) {
       const hasTorch = track && capabilities && capabilities.torch && currentFacingMode === 'environment';
@@ -523,24 +533,13 @@
         }
       }
 
-      // Pre-snap rapid double blink (on-off-on-off)
-      if (hasTorch) {
-        await setTorch(true);
-        await new Promise(r => setTimeout(r, DOUBLE_BLINK_MS));
-        await setTorch(false);
-        await new Promise(r => setTimeout(r, DOUBLE_BLINK_MS));
-        await setTorch(true);
-        await new Promise(r => setTimeout(r, DOUBLE_BLINK_MS));
-        await setTorch(false);
-      } else {
-        screenFlash.classList.add('active');
-        setTimeout(() => screenFlash.classList.remove('active'), DOUBLE_BLINK_MS);
-        await new Promise(r => setTimeout(r, DOUBLE_BLINK_MS));
-        screenFlash.classList.add('active');
-        setTimeout(() => screenFlash.classList.remove('active'), DOUBLE_BLINK_MS);
-      }
-
       countdownEl.style.display = 'none';
+
+      // Ensure LED is strictly OFF and wait for required clear pause before flash/capture sequence
+      if (hasTorch) {
+        await setTorch(false);
+      }
+      await new Promise(r => setTimeout(r, TIMER_TO_CAPTURE_PAUSE));
     }
 
     function triggerCapture() {
@@ -558,8 +557,8 @@
     }
 
     /**
-     * Executes the final photo capture sequence with serialized torch control, proper LED settle delay,
-     * synthesized shutter sound, canvas frame grab, and reliable finally block restoration of torch state.
+     * Executes the final photo capture sequence with serialized torch control, dark-room exposure stabilization
+     * (sampling average brightness or waiting for TORCH_SETTLE_MS), 0.6x ultra-wide canvas scaling, and finally block restoration.
      */
     async function executeCaptureSequence() {
       const isFlashOn = (flashMode === 1);
@@ -570,7 +569,42 @@
         if (isFlashOn || isAlwaysOn) {
           if (hasTorch) {
             await setTorch(true);
-            await new Promise(r => setTimeout(r, TORCH_SETTLE_MS));
+            
+            // Dark Room Exposure Stabilization: wait for sensor auto-exposure (AE) using brightness sampling or timeout safeguard
+            const sampleCanvas = document.createElement('canvas');
+            sampleCanvas.width = 64;
+            sampleCanvas.height = 64;
+            const sampleCtx = sampleCanvas.getContext('2d');
+            
+            const startTime = performance.now();
+            let stabilized = false;
+            let lastBrightness = -1;
+
+            while ((performance.now() - startTime) < TORCH_BRIGHTNESS_TIMEOUT) {
+              await new Promise(r => setTimeout(r, 60));
+              try {
+                sampleCtx.drawImage(video, 0, 0, 64, 64);
+                const imgData = sampleCtx.getImageData(0, 0, 64, 64).data;
+                let sum = 0;
+                for (let i = 0; i < imgData.length; i += 4) {
+                  sum += (imgData[i] * 0.299 + imgData[i+1] * 0.587 + imgData[i+2] * 0.114);
+                }
+                const avgBrightness = sum / (64 * 64);
+
+                if (lastBrightness !== -1 && Math.abs(avgBrightness - lastBrightness) < 1.5) {
+                  stabilized = true;
+                  break;
+                }
+                lastBrightness = avgBrightness;
+              } catch (err) {
+                break;
+              }
+            }
+
+            if (!stabilized) {
+              // Fallback explicit settle delay if sampling loop timed out
+              await new Promise(r => setTimeout(r, TORCH_SETTLE_MS));
+            }
           }
         }
 
@@ -579,11 +613,23 @@
 
         playDslrShutterSound();
 
+        // Canvas Capture with 0.6x Ultra-Wide Software Fallback Scaling support
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         const ctx = canvas.getContext('2d');
         ctx.filter = video.style.filter || 'none';
-        ctx.drawImage(video, 0, 0);
+
+        if (currentZoomVal < 1.0) {
+          // Center-crop / scale canvas when 0.6x software zoom is active to reflect wider FOV
+          ctx.save();
+          ctx.translate(canvas.width / 2, canvas.height / 2);
+          ctx.scale(currentZoomVal, currentZoomVal);
+          ctx.translate(-canvas.width / 2, -canvas.height / 2);
+          ctx.drawImage(video, 0, 0);
+          ctx.restore();
+        } else {
+          ctx.drawImage(video, 0, 0);
+        }
 
         const link = document.createElement('a');
         link.href = canvas.toDataURL('image/jpeg', 0.95);
@@ -617,7 +663,7 @@
       navigator.mediaSession.setActionHandler('nexttrack', triggerCapture);
     }
 
-    initCode = initCamera();
+    initCamera();
   </script>
 </body>
 </html>
