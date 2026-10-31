@@ -36,7 +36,6 @@
     }
     canvas { display: none; }
 
-    /* Screen Flash Overlay */
     .screen-flash {
       position: absolute;
       top: 0;
@@ -131,7 +130,6 @@
       color: #fff;
     }
 
-    /* Quick Lens / Zoom Pill Buttons (0.6x, 1x, 2x, 5x, 10x) */
     .lens-bar {
       display: flex;
       justify-content: space-between;
@@ -200,14 +198,12 @@
   </div>
 
   <div class="controls-overlay">
-    <!-- Top Bar: Flash Mode, Timer, Flip -->
     <div class="top-bar">
       <button class="icon-btn" id="flashBtn">⚡ Flash: Off</button>
       <button class="icon-btn" id="timerBtn">⏱️ Timer</button>
       <button class="icon-btn" id="flipBtn">🔄 Flip</button>
     </div>
 
-    <!-- Quick Lens / Zoom Buttons (Matching your 0.6x to 10x native UI) -->
     <div class="lens-bar">
       <button class="lens-btn" data-zoom="0.6">0.6x</button>
       <button class="lens-btn active" data-zoom="1">1x</button>
@@ -236,7 +232,7 @@
   <audio id="silentAudio" loop src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="></audio>
 
   <script>
-    // Service Worker
+    // Service Worker Registration
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(() => {});
     }
@@ -286,6 +282,35 @@
     let timerSetting = 0; // 0, 3, or 10 seconds
     let isCountingDown = false;
 
+    // Tunable constants for torch settling and timer blink cadence
+    const TORCH_SETTLE_MS = 250;      // Settle delay for LED hardware state and auto-exposure stabilization
+    const COUNTDOWN_PULSE_MS = 130;   // Duration of torch pulse per remaining countdown second
+    const DOUBLE_BLINK_MS = 70;       // Duration of each blink in the pre-snap rapid double blink
+
+    /**
+     * Serialized torch helper: queues and awaits torch state changes to prevent race conditions
+     * between countdown blinks, timer states, and capture sequences. Tracks internal state to make no-ops cheap.
+     * Caveat: Front cameras generally do not expose torch capabilities; calls are safely short-circuited.
+     */
+    let torchQueue = Promise.resolve();
+    let internalTorchState = false;
+
+    function setTorch(on) {
+      torchQueue = torchQueue.then(async () => {
+        if (!track || !capabilities || !capabilities.torch || currentFacingMode === 'user') {
+          return;
+        }
+        if (internalTorchState === on) return;
+        try {
+          await track.applyConstraints({ advanced: [{ torch: on }] });
+          internalTorchState = on;
+        } catch (e) {
+          console.warn("Torch constraint failed:", e);
+        }
+      });
+      return torchQueue;
+    }
+
     // 1. Camera Initialization
     async function initCamera() {
       try {
@@ -303,8 +328,8 @@
 
         track = activeStream.getVideoTracks()[0];
         capabilities = track.getCapabilities ? track.getCapabilities() : {};
+        internalTorchState = false; // Reset on new stream
 
-        // Adjust zoom slider bounds based on hardware capabilities if available
         if (capabilities.zoom) {
           zoomSlider.min = capabilities.zoom.min;
           zoomSlider.max = capabilities.zoom.max;
@@ -312,7 +337,7 @@
         }
 
         if (flashMode === 2 && capabilities.torch) {
-          await track.applyConstraints({ advanced: [{ torch: true }] });
+          await setTorch(true);
         }
 
         status.innerText = "Ready • Press earbud to snap";
@@ -321,12 +346,10 @@
       }
     }
 
-    // Apply Zoom helper function
     async function applyZoom(val) {
       zoomSlider.value = val;
       zoomLabel.innerText = `Zoom: ${parseFloat(val).toFixed(1)}x`;
 
-      // Highlight active lens button if it matches standard presets
       lensButtons.forEach(btn => {
         if (parseFloat(btn.dataset.zoom) === parseFloat(val)) {
           btn.classList.add('active');
@@ -340,7 +363,6 @@
           await track.applyConstraints({ advanced: [{ zoom: val }] });
           video.style.transform = 'scale(1)';
         } else {
-          // Software fallback scaling for ultrawide (0.6x) or high telephoto zoom
           video.style.transform = `scale(${val})`;
         }
       } catch (e) {
@@ -348,7 +370,6 @@
       }
     }
 
-    // Lens button click listeners
     lensButtons.forEach(btn => {
       btn.onclick = () => {
         const val = parseFloat(btn.dataset.zoom);
@@ -360,26 +381,22 @@
       applyZoom(parseFloat(zoomSlider.value));
     };
 
-    // Flash Mode Cycling
+    // Flash Mode Cycling (Off -> Flash ON -> Light Always-On)
     flashBtn.onclick = async () => {
       flashMode = (flashMode + 1) % 3;
       
-      if (track && capabilities.torch) {
-        try { await track.applyConstraints({ advanced: [{ torch: false }] }); } catch (e) {}
-      }
-
       if (flashMode === 0) {
         flashBtn.innerText = "⚡ Flash: Off";
         flashBtn.classList.remove('active');
+        await setTorch(false);
       } else if (flashMode === 1) {
         flashBtn.innerText = "⚡ Flash: ON";
         flashBtn.classList.add('active');
+        await setTorch(false);
       } else if (flashMode === 2) {
         flashBtn.innerText = "🔦 Light: Always-On";
         flashBtn.classList.add('active');
-        if (track && capabilities.torch) {
-          try { await track.applyConstraints({ advanced: [{ torch: true }] }); } catch (e) {}
-        }
+        await setTorch(true);
       }
     };
 
@@ -389,14 +406,12 @@
       video.style.filter = `brightness(${val}%)`;
     };
 
-    // Camera Flip (Front / Back)
     flipBtn.onclick = () => {
       currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
       applyZoom(1);
       initCamera();
     };
 
-    // Timer Toggle
     timerBtn.onclick = () => {
       if (timerSetting === 0) {
         timerSetting = 3;
@@ -413,7 +428,6 @@
       }
     };
 
-    // 3. Tap to Focus
     viewfinderWrapper.addEventListener('click', async (e) => {
       if (e.target.closest('.controls-overlay')) return;
 
@@ -433,7 +447,11 @@
       }
     });
 
-    // 4. Authentic DSLR Shutter Sound Synthesizer
+    /**
+     * Synthesizes an authentic DSLR mechanical shutter sound using Web Audio API filtered noise buffers.
+     * Generates a primary percussive mirror slap followed by a secondary mechanical click body, decaying exponentially.
+     * Caveat: Relies on user gesture activation to unlock AudioContext playback in mobile browsers.
+     */
     function playDslrShutterSound() {
       try {
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -441,135 +459,152 @@
 
         const now = audioCtx.currentTime;
 
-        const osc1 = audioCtx.createOscillator();
-        const gain1 = audioCtx.createGain();
-        osc1.type = 'triangle';
-        osc1.frequency.setValueAtTime(160, now);
-        osc1.frequency.exponentialRampToValueAtTime(45, now + 0.05);
-        gain1.gain.setValueAtTime(0.8, now);
-        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
-        osc1.connect(gain1);
-        gain1.connect(audioCtx.destination);
-        osc1.start(now);
-        osc1.stop(now + 0.05);
+        function createNoiseClick(startTime, duration, centerFreq, qVal, peakGain) {
+          const bufferSize = audioCtx.sampleRate * duration;
+          const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+          const data = buffer.getChannelData(0);
+          for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+          }
 
-        const osc2 = audioCtx.createOscillator();
-        const gain2 = audioCtx.createGain();
-        osc2.type = 'sine';
-        osc2.frequency.setValueAtTime(1200, now);
-        osc2.frequency.exponentialRampToValueAtTime(350, now + 0.03);
-        gain2.gain.setValueAtTime(0.5, now);
-        gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
-        osc2.connect(gain2);
-        gain2.connect(audioCtx.destination);
-        osc2.start(now);
-        osc2.stop(now + 0.03);
+          const source = audioCtx.createBufferSource();
+          source.buffer = buffer;
 
-        const osc3 = audioCtx.createOscillator();
-        const gain3 = audioCtx.createGain();
-        osc3.type = 'triangle';
-        osc3.frequency.setValueAtTime(130, now + 0.08);
-        osc3.frequency.exponentialRampToValueAtTime(50, now + 0.13);
-        gain3.gain.setValueAtTime(0.7, now + 0.08);
-        gain3.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
-        osc3.connect(gain3);
-        gain3.connect(audioCtx.destination);
-        osc3.start(now + 0.08);
-        osc3.stop(now + 0.13);
+          const filter = audioCtx.createBiquadFilter();
+          filter.type = 'bandpass';
+          filter.frequency.setValueAtTime(centerFreq, startTime);
+          filter.Q.setValueAtTime(qVal, startTime);
 
-        const bufferSize = audioCtx.sampleRate * 0.14;
-        const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-        const data = buffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) {
-          data[i] = Math.random() * 2 - 1;
+          const gain = audioCtx.createGain();
+          gain.gain.setValueAtTime(peakGain, startTime);
+          gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+
+          source.connect(filter);
+          filter.connect(gain);
+          gain.connect(audioCtx.destination);
+
+          source.start(startTime);
+          source.stop(startTime + duration);
         }
-        const noise = audioCtx.createBufferSource();
-        noise.buffer = buffer;
 
-        const filter = audioCtx.createBiquadFilter();
-        filter.type = 'bandpass';
-        filter.frequency.setValueAtTime(2800, now);
-        filter.Q.setValueAtTime(4, now);
+        // First click (mirror/shutter blade): ~12ms, bright (~4000Hz)
+        createNoiseClick(now, 0.012, 4000, 3, 0.8);
 
-        const noiseGain = audioCtx.createGain();
-        noiseGain.gain.setValueAtTime(0.6, now);
-        noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+        // Second click (mechanical body body): ~35ms starting 75ms later, lower center freq (~1800Hz)
+        createNoiseClick(now + 0.075, 0.035, 1800, 2.5, 0.5);
 
-        noise.connect(filter);
-        filter.connect(noiseGain);
-        noiseGain.connect(audioCtx.destination);
-        noise.start(now);
-        noise.stop(now + 0.14);
-      } catch (e) {}
+      } catch (e) {
+        console.warn("Audio playback failed:", e);
+      }
     }
 
-    // 5. Photo Capture Handler
+    /**
+     * Executes the LED torch countdown blink sequence and pre-snap rapid double blink.
+     * Pulses the torch on for each remaining second, then performs a rapid double blink before capture.
+     * Falls back to CSS screen flashes if torch is unavailable or front camera is active.
+     */
+    async function runCountdownBlink(seconds) {
+      const hasTorch = track && capabilities && capabilities.torch && currentFacingMode === 'environment';
+
+      for (let i = seconds; i > 0; i--) {
+        countdownEl.innerText = i;
+        countdownEl.style.display = 'block';
+
+        if (hasTorch) {
+          await setTorch(true);
+          await new Promise(r => setTimeout(r, COUNTDOWN_PULSE_MS));
+          await setTorch(false);
+          const remainder = 1000 - COUNTDOWN_PULSE_MS;
+          await new Promise(r => setTimeout(r, remainder));
+        } else {
+          screenFlash.classList.add('active');
+          setTimeout(() => screenFlash.classList.remove('active'), COUNTDOWN_PULSE_MS);
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      }
+
+      // Pre-snap rapid double blink (on-off-on-off)
+      if (hasTorch) {
+        await setTorch(true);
+        await new Promise(r => setTimeout(r, DOUBLE_BLINK_MS));
+        await setTorch(false);
+        await new Promise(r => setTimeout(r, DOUBLE_BLINK_MS));
+        await setTorch(true);
+        await new Promise(r => setTimeout(r, DOUBLE_BLINK_MS));
+        await setTorch(false);
+      } else {
+        screenFlash.classList.add('active');
+        setTimeout(() => screenFlash.classList.remove('active'), DOUBLE_BLINK_MS);
+        await new Promise(r => setTimeout(r, DOUBLE_BLINK_MS));
+        screenFlash.classList.add('active');
+        setTimeout(() => screenFlash.classList.remove('active'), DOUBLE_BLINK_MS);
+      }
+
+      countdownEl.style.display = 'none';
+    }
+
     function triggerCapture() {
       if (isCountingDown || !video.videoWidth) return;
 
       if (timerSetting > 0) {
         isCountingDown = true;
-        let count = timerSetting;
-        countdownEl.innerText = count;
-        countdownEl.style.display = 'block';
-
-        const timerInterval = setInterval(() => {
-          count--;
-          if (count > 0) {
-            countdownEl.innerText = count;
-          } else {
-            clearInterval(timerInterval);
-            countdownEl.style.display = 'none';
-            isCountingDown = false;
-            executeCaptureSequence();
-          }
-        }, 1000);
+        runCountdownBlink(timerSetting).then(() => {
+          isCountingDown = false;
+          executeCaptureSequence();
+        });
       } else {
         executeCaptureSequence();
       }
     }
 
+    /**
+     * Executes the final photo capture sequence with serialized torch control, proper LED settle delay,
+     * synthesized shutter sound, canvas frame grab, and reliable finally block restoration of torch state.
+     */
     async function executeCaptureSequence() {
       const isFlashOn = (flashMode === 1);
-      const wasAlwaysOn = (flashMode === 2);
+      const isAlwaysOn = (flashMode === 2);
+      const hasTorch = track && capabilities && capabilities.torch && currentFacingMode === 'environment';
 
-      // Extended Flash Sequence: Turn torch ON, wait 500ms for stable illumination before capturing
-      if (isFlashOn && track && capabilities.torch) {
-        try {
-          await track.applyConstraints({ advanced: [{ torch: true }] });
-          await new Promise(r => setTimeout(r, 500)); 
-        } catch (e) {}
+      try {
+        if (isFlashOn || isAlwaysOn) {
+          if (hasTorch) {
+            await setTorch(true);
+            await new Promise(r => setTimeout(r, TORCH_SETTLE_MS));
+          }
+        }
+
+        screenFlash.classList.add('active');
+        setTimeout(() => screenFlash.classList.remove('active'), 120);
+
+        playDslrShutterSound();
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.filter = video.style.filter || 'none';
+        ctx.drawImage(video, 0, 0);
+
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL('image/jpeg', 0.95);
+        link.download = `photo_${Date.now()}.jpg`;
+        link.click();
+
+        status.innerText = "✨ Photo Saved!";
+        setTimeout(() => status.innerText = "Ready • Press earbud to snap", 2000);
+      } finally {
+        if (hasTorch) {
+          if (isAlwaysOn) {
+            await setTorch(true);
+          } else {
+            await setTorch(false);
+          }
+        }
       }
-
-      screenFlash.classList.add('active');
-      setTimeout(() => screenFlash.classList.remove('active'), 120);
-
-      playDslrShutterSound();
-
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      ctx.filter = video.style.filter || 'none';
-      ctx.drawImage(video, 0, 0);
-
-      if (isFlashOn && track && capabilities.torch && !wasAlwaysOn) {
-        try {
-          await track.applyConstraints({ advanced: [{ torch: false }] });
-        } catch (e) {}
-      }
-
-      const link = document.createElement('a');
-      link.href = canvas.toDataURL('image/jpeg', 0.95);
-      link.download = `photo_${Date.now()}.jpg`;
-      link.click();
-
-      status.innerText = "✨ Photo Saved!";
-      setTimeout(() => status.innerText = "Ready • Press earbud to snap", 2000);
     }
 
     document.getElementById('snapBtn').onclick = triggerCapture;
 
-    // 6. Bluetooth Remote & Audio Activation
     document.body.addEventListener('click', () => {
       silentAudio.play().catch(() => {});
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -582,7 +617,7 @@
       navigator.mediaSession.setActionHandler('nexttrack', triggerCapture);
     }
 
-    initCamera();
+    initCode = initCamera();
   </script>
 </body>
 </html>
