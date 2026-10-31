@@ -83,21 +83,26 @@
       z-index: 10;
     }
 
-    /* --- MINIMALIST UI CONTROLS --- */
+    /* --- MINIMALIST UI --- */
     
     #status {
       position: absolute;
-      bottom: 30px;
+      top: 20px;
       left: 50%;
       transform: translateX(-50%);
-      font-size: 12px;
-      color: rgba(255, 255, 255, 0.6);
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.8);
       text-align: center;
       margin: 0;
       z-index: 4;
       pointer-events: none;
       text-shadow: 0 1px 3px rgba(0,0,0,0.8);
       white-space: nowrap;
+      background: rgba(0,0,0,0.3);
+      padding: 6px 16px;
+      border-radius: 20px;
+      backdrop-filter: blur(5px);
+      -webkit-backdrop-filter: blur(5px);
     }
 
     .minimal-controls {
@@ -108,72 +113,85 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 0 30px;
+      padding: 0 40px;
       z-index: 6;
       pointer-events: none;
     }
 
+    /* Minimalist Gear Icon Button */
     .round-btn {
       width: 54px;
       height: 54px;
       border-radius: 50%;
-      background: rgba(30, 30, 30, 0.5);
+      background: rgba(20, 20, 20, 0.5);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
       border: 1px solid rgba(255, 255, 255, 0.2);
       color: #fff;
-      font-size: 22px;
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
       pointer-events: auto;
       transition: background 0.2s;
+      -webkit-tap-highlight-color: transparent;
     }
-    .round-btn:active { background: rgba(60, 60, 60, 0.7); }
+    .round-btn:active { background: rgba(255, 255, 255, 0.2); }
+    .round-btn svg { width: 24px; height: 24px; opacity: 0.9; }
 
+    /* Classic Camera Shutter Ring */
     .shutter-btn {
-      width: 72px;
-      height: 72px;
+      width: 74px;
+      height: 74px;
       border-radius: 50%;
-      background: rgba(255, 255, 255, 0.2);
-      backdrop-filter: blur(5px);
-      -webkit-backdrop-filter: blur(5px);
+      background: transparent;
       border: 3px solid rgba(255, 255, 255, 0.8);
       cursor: pointer;
       pointer-events: auto;
-      transition: transform 0.1s, background 0.1s;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.1s;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.4);
     }
-    .shutter-btn:active {
-      transform: scale(0.9);
-      background: rgba(255, 255, 255, 0.5);
+    .shutter-inner {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.6);
+      transition: background 0.1s;
     }
+    .shutter-btn:active { transform: scale(0.92); }
+    .shutter-btn:active .shutter-inner { background: rgba(255, 255, 255, 1); }
 
-    /* --- FULL SETTINGS PANEL (HIDDEN BY DEFAULT) --- */
+    /* --- FLOATING SETTINGS CARD --- */
     .controls-overlay {
       position: absolute;
-      bottom: -100%; /* Hidden below screen */
+      bottom: 140px; /* Floats ABOVE the gear and shutter buttons */
       left: 50%;
-      transform: translateX(-50%);
-      width: 92%;
-      max-width: 420px;
-      background: rgba(15, 15, 15, 0.6); /* Highly transparent */
+      transform: translate(-50%, 20px);
+      width: 90%;
+      max-width: 380px;
+      background: rgba(20, 20, 20, 0.65); /* Semi-transparent glass */
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
-      padding: 18px;
-      border-radius: 20px 20px 0 0;
+      padding: 16px;
+      border-radius: 20px;
       display: flex;
       flex-direction: column;
       gap: 12px;
       z-index: 20;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-bottom: none;
-      box-shadow: 0 -10px 30px rgba(0,0,0,0.5);
-      transition: bottom 0.3s cubic-bezier(0.175, 0.885, 0.32, 1);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
     }
     .controls-overlay.visible {
-      bottom: 0;
+      opacity: 1;
+      pointer-events: auto;
+      transform: translate(-50%, 0);
     }
 
     .top-bar { display: flex; justify-content: space-between; gap: 6px; }
@@ -184,7 +202,7 @@
       color: #fff;
       padding: 10px;
       border-radius: 10px;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
       cursor: pointer;
       display: flex;
@@ -196,7 +214,7 @@
     }
     .icon-btn.active { background: #007aff; border-color: #007aff; }
 
-    .lens-bar { display: flex; justify-content: space-between; gap: 8px; margin-top: 5px; }
+    .lens-bar { display: flex; justify-content: space-between; gap: 8px; }
     .lens-btn {
       background: rgba(255, 255, 255, 0.1);
       border: 1px solid rgba(255, 255, 255, 0.05);
@@ -212,24 +230,23 @@
     }
     .lens-btn.active { background: #ffcc00; color: #000; }
 
-    .slider-group { display: flex; align-items: center; gap: 10px; font-size: 12px; color: #aaa; margin-top: 5px;}
+    .slider-group { display: flex; align-items: center; gap: 10px; font-size: 12px; color: #aaa; }
     .slider-group label { min-width: 75px; color: #fff; font-weight: 500; }
-    input[type=range] { flex-grow: 1; accent-color: #007aff; height: 6px; border-radius: 3px; background: #333; }
+    input[type=range] { flex-grow: 1; accent-color: #007aff; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.2); }
 
-    .btn-row { display: flex; gap: 8px; margin-top: 10px; }
+    .btn-row { display: flex; gap: 8px; }
     .main-btn {
-      padding: 14px;
-      font-size: 16px;
+      padding: 12px;
+      font-size: 14px;
       font-weight: bold;
       border: none;
-      border-radius: 50px;
+      border-radius: 12px;
       background: #007aff;
       color: white;
       cursor: pointer;
       flex-grow: 1;
       box-shadow: 0 4px 12px rgba(0, 122, 255, 0.4);
     }
-    .main-btn:active { background: #005bb5; }
     #installBtn { background: #34c759; display: none; }
   </style>
 </head>
@@ -245,13 +262,23 @@
 
   <p id="status">Ready • Press earbud to snap</p>
 
+  <!-- Minimalist Floating Controls -->
   <div class="minimal-controls">
-    <button class="round-btn" id="toggleMenuBtn">⚙️</button>
-    <button class="shutter-btn" id="floatingSnapBtn"></button>
+    <button class="round-btn" id="toggleMenuBtn" aria-label="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+    </button>
+    
+    <button class="shutter-btn" id="floatingSnapBtn" aria-label="Take Photo">
+      <div class="shutter-inner"></div>
+    </button>
+    
     <div style="width: 54px;"></div> <!-- Spacer to center the shutter button -->
   </div>
 
-  <!-- Hidden by default, slides up when gear is tapped -->
+  <!-- Floating Settings Card -->
   <div class="controls-overlay" id="fullControls">
     <div class="top-bar">
       <button class="icon-btn" id="flashBtn">⚡ Flash: Off</button>
@@ -336,7 +363,7 @@
     let torchQueue = Promise.resolve();
     let internalTorchState = false;
 
-    // Toggle the settings panel
+    // Toggle the floating settings card
     document.getElementById('toggleMenuBtn').onclick = () => {
       fullControls.classList.toggle('visible');
     };
@@ -457,6 +484,7 @@
     };
 
     viewfinderWrapper.addEventListener('click', async (e) => {
+      // Ignore clicks on the floating buttons or settings panel
       if (e.target.closest('.minimal-controls') || e.target.closest('.controls-overlay')) return;
 
       const rect = viewfinderWrapper.getBoundingClientRect();
@@ -474,9 +502,8 @@
     });
 
     /**
-     * NEW MECHANICAL SHUTTER SOUND
-     * Uses two distinct high-frequency noise bursts instead of pure oscillators.
-     * This creates the sharp, high-pitched "snick-clack" of a DSLR mirror slapping up and shutter closing.
+     * AUTHENTIC SHUTTER SOUND (Refined)
+     * Uses high-passed noise bursts + a fast pitch drop to simulate a sharp mechanical mirror slap.
      */
     function playDslrShutterSound() {
       try {
@@ -485,41 +512,54 @@
 
         const now = audioCtx.currentTime;
 
-        // Generates a tiny burst of filtered noise (the "click")
-        function createMechanicalClick(startTime, duration, filterFreq, gainMult) {
+        function createMechanicalClick(startTime, duration, isSecondClick) {
+          // 1. Sharp High-Frequency Noise (The "Snick")
           const bufferSize = audioCtx.sampleRate * duration;
           const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
           const data = buffer.getChannelData(0);
-          
-          // Pure white noise burst
           for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
-
+          
           const noise = audioCtx.createBufferSource();
           noise.buffer = buffer;
 
-          // Highpass filter removes the "broom falling" low-end thud, leaving only the mechanical click
           const filter = audioCtx.createBiquadFilter();
-          filter.type = 'highpass';
-          filter.frequency.value = filterFreq;
+          filter.type = 'bandpass';
+          filter.frequency.value = isSecondClick ? 3000 : 5000;
+          filter.Q.value = 1.5;
 
-          const gain = audioCtx.createGain();
-          gain.gain.setValueAtTime(gainMult, startTime);
-          // Sharp decay to silence
-          gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+          const noiseGain = audioCtx.createGain();
+          noiseGain.gain.setValueAtTime(0.8, startTime);
+          noiseGain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
 
           noise.connect(filter);
-          filter.connect(gain);
-          gain.connect(audioCtx.destination);
+          filter.connect(noiseGain);
+          noiseGain.connect(audioCtx.destination);
 
           noise.start(startTime);
           noise.stop(startTime + duration);
+
+          // 2. Fast Low-Frequency Transient (The "Clack")
+          const osc = audioCtx.createOscillator();
+          const oscGain = audioCtx.createGain();
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(isSecondClick ? 250 : 400, startTime);
+          osc.frequency.exponentialRampToValueAtTime(80, startTime + duration);
+          
+          oscGain.gain.setValueAtTime(0.4, startTime);
+          oscGain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+          osc.connect(oscGain);
+          oscGain.connect(audioCtx.destination);
+
+          osc.start(startTime);
+          osc.stop(startTime + duration);
         }
 
-        // 1st Click: The mirror swinging up. Very short, very high frequency.
-        createMechanicalClick(now, 0.015, 5000, 1.0);
+        // 1st Click: Mirror swinging up
+        createMechanicalClick(now, 0.02, false);
         
-        // 2nd Click: The shutter curtain closing. Slightly longer, slightly lower freq, occurring 50ms later.
-        createMechanicalClick(now + 0.05, 0.025, 3500, 0.7);
+        // 2nd Click: Shutter curtain closing (happens 60ms later)
+        createMechanicalClick(now + 0.06, 0.03, true);
 
       } catch (e) {}
     }
@@ -597,7 +637,6 @@
       }
     }
 
-    // Bind both the floating button and the bluetooth remote
     document.getElementById('floatingSnapBtn').onclick = triggerCapture;
 
     document.body.addEventListener('click', () => {
