@@ -47,10 +47,10 @@
       opacity: 0;
       pointer-events: none;
       z-index: 15;
-      transition: opacity 0.08s ease-out;
+      transition: opacity 0.05s ease-out;
     }
     .screen-flash.active {
-      opacity: 0.9;
+      opacity: 0.95;
     }
 
     .focus-ring {
@@ -284,7 +284,6 @@
     flashBtn.onclick = async () => {
       flashMode = (flashMode + 1) % 3;
       
-      // Clear existing torch state when switching modes
       if (track && capabilities.torch) {
         try { await track.applyConstraints({ advanced: [{ torch: false }] }); } catch (e) {}
       }
@@ -371,55 +370,55 @@
       }
     });
 
-    // 4. Authentic Multi-Stage DSLR Shutter Sound Synthesizer
-    function playBetterMidiShutterSound() {
+    // 4. Authentic DSLR Shutter Sound Synthesizer (Matched to reference clack)
+    function playDslrShutterSound() {
       try {
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         if (audioCtx.state === 'suspended') audioCtx.resume();
 
         const now = audioCtx.currentTime;
 
-        // Stage 1: First Curtain / Mirror Up (Deep acoustic thud)
+        // Part 1: Mirror Up Thump (Deep mechanical thud)
         const osc1 = audioCtx.createOscillator();
         const gain1 = audioCtx.createGain();
         osc1.type = 'triangle';
-        osc1.frequency.setValueAtTime(140, now);
-        osc1.frequency.exponentialRampToValueAtTime(40, now + 0.04);
-        gain1.gain.setValueAtTime(0.7, now);
-        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+        osc1.frequency.setValueAtTime(160, now);
+        osc1.frequency.exponentialRampToValueAtTime(45, now + 0.05);
+        gain1.gain.setValueAtTime(0.8, now);
+        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
         osc1.connect(gain1);
         gain1.connect(audioCtx.destination);
         osc1.start(now);
-        osc1.stop(now + 0.04);
+        osc1.stop(now + 0.05);
 
-        // Stage 2: Metallic Shutter Blade Click (Mid-High transient)
+        // Part 2: Shutter Blade Open Click (Crisp high transient)
         const osc2 = audioCtx.createOscillator();
         const gain2 = audioCtx.createGain();
         osc2.type = 'sine';
-        osc2.frequency.setValueAtTime(950, now);
-        osc2.frequency.exponentialRampToValueAtTime(300, now + 0.03);
-        gain2.gain.setValueAtTime(0.4, now);
+        osc2.frequency.setValueAtTime(1200, now);
+        osc2.frequency.exponentialRampToValueAtTime(350, now + 0.03);
+        gain2.gain.setValueAtTime(0.5, now);
         gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
         osc2.connect(gain2);
         gain2.connect(audioCtx.destination);
         osc2.start(now);
         osc2.stop(now + 0.03);
 
-        // Stage 3: Second Curtain / Mirror Down (Slightly delayed mechanical clack at +0.07s)
+        // Part 3: Mirror Down / Second Curtain Clack (Slightly delayed at +0.08s)
         const osc3 = audioCtx.createOscillator();
         const gain3 = audioCtx.createGain();
         osc3.type = 'triangle';
-        osc3.frequency.setValueAtTime(110, now + 0.07);
-        osc3.frequency.exponentialRampToValueAtTime(50, now + 0.11);
-        gain3.gain.setValueAtTime(0.5, now + 0.07);
-        gain3.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+        osc3.frequency.setValueAtTime(130, now + 0.08);
+        osc3.frequency.exponentialRampToValueAtTime(50, now + 0.13);
+        gain3.gain.setValueAtTime(0.7, now + 0.08);
+        gain3.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
         osc3.connect(gain3);
         gain3.connect(audioCtx.destination);
-        osc3.start(now + 0.07);
-        osc3.stop(now + 0.11);
+        osc3.start(now + 0.08);
+        osc3.stop(now + 0.13);
 
-        // Stage 4: Spring Mechanism Noise Burst (Textured metallic clatter)
-        const bufferSize = audioCtx.sampleRate * 0.12;
+        // Part 4: Metallic Spring Clatter (Bandpass Noise Burst)
+        const bufferSize = audioCtx.sampleRate * 0.14;
         const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
         const data = buffer.getChannelData(0);
         for (let i = 0; i < bufferSize; i++) {
@@ -430,18 +429,18 @@
 
         const filter = audioCtx.createBiquadFilter();
         filter.type = 'bandpass';
-        filter.frequency.setValueAtTime(3200, now);
-        filter.Q.setValueAtTime(5, now);
+        filter.frequency.setValueAtTime(2800, now);
+        filter.Q.setValueAtTime(4, now);
 
         const noiseGain = audioCtx.createGain();
-        noiseGain.gain.setValueAtTime(0.5, now);
-        noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+        noiseGain.gain.setValueAtTime(0.6, now);
+        noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
 
         noise.connect(filter);
         filter.connect(noiseGain);
         noiseGain.connect(audioCtx.destination);
         noise.start(now);
-        noise.stop(now + 0.12);
+        noise.stop(now + 0.14);
       } catch (e) {}
     }
 
@@ -473,21 +472,21 @@
 
     async function executeCaptureSequence() {
       const isFlashOn = (flashMode === 1);
+      const wasAlwaysOn = (flashMode === 2);
 
-      // If Flash ON is selected, turn on hardware torch with a proper ramp-up window
+      // True Flash Sequence: Turn torch ON, wait 250ms for LED to reach full illumination
       if (isFlashOn && track && capabilities.torch) {
         try {
           await track.applyConstraints({ advanced: [{ torch: true }] });
-          // Wait 100ms for Android hardware LED to achieve full brightness before exposure
-          await new Promise(r => setTimeout(r, 100));
+          await new Promise(r => setTimeout(r, 250)); // Proper flash warm-up delay
         } catch (e) {}
       }
 
-      // Screen flash effect & rich multi-stage MIDI shutter sound
+      // Screen flash effect & DSLR shutter sound
       screenFlash.classList.add('active');
       setTimeout(() => screenFlash.classList.remove('active'), 120);
 
-      playBetterMidiShutterSound();
+      playDslrShutterSound();
 
       // Draw photo to canvas
       canvas.width = video.videoWidth;
@@ -496,8 +495,8 @@
       ctx.filter = video.style.filter || 'none';
       ctx.drawImage(video, 0, 0);
 
-      // Turn off flash after exposure (unless Always-On Light mode is selected)
-      if (isFlashOn && track && capabilities.torch) {
+      // Turn off flash after capture (unless Always-On Light mode is active)
+      if (isFlashOn && track && capabilities.torch && !wasAlwaysOn) {
         try {
           await track.applyConstraints({ advanced: [{ torch: false }] });
         } catch (e) {}
