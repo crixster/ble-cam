@@ -3,7 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PWA Camera with Sound Feedback</title>
+  <title>PWA Camera</title>
+  
+  <!-- Inline Manifest Data URL to force PWA installability without extra files -->
+  <link rel="manifest" id="manifestLink">
+
   <style>
     body {
       margin: 0;
@@ -26,11 +30,7 @@
       justify-content: center;
       overflow: hidden;
     }
-    video {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
+    video { width: 100%; height: 100%; object-fit: cover; }
     canvas { display: none; }
     
     .controls-overlay {
@@ -46,25 +46,26 @@
       flex-direction: column;
       gap: 12px;
     }
-    .slider-group {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 14px;
-    }
-    .slider-group label { min-width: 70px; }
-    input[type=range] { flex-grow: 1; accent-color: #007aff; }
     
+    .btn-row {
+      display: flex;
+      gap: 10px;
+    }
     button {
-      padding: 12px 24px;
-      font-size: 16px;
+      padding: 12px 20px;
+      font-size: 15px;
       font-weight: bold;
       border: none;
       border-radius: 50px;
       background: #007aff;
       color: white;
       cursor: pointer;
-      width: 100%;
+      flex-grow: 1;
+    }
+    /* Hidden by default until beforeinstallprompt fires */
+    #installBtn {
+      background: #34c759;
+      display: none;
     }
     #status { font-size: 12px; color: #aaa; text-align: center; }
   </style>
@@ -77,74 +78,119 @@
   </div>
 
   <div class="controls-overlay">
-    <!-- Zoom Control -->
-    <div class="slider-group" id="zoomControlGroup" style="display:none;">
-      <label id="zoomLabel">Zoom: 1x</label>
-      <input type="range" id="zoomSlider" min="1" max="5" step="0.1" value="1">
+    <div class="btn-row">
+      <button id="snapBtn">📸 Take Photo</button>
+      <button id="installBtn">📲 Install App</button>
     </div>
-
-    <!-- Exposure / Brightness Control -->
-    <div class="slider-group" id="exposureControlGroup" style="display:none;">
-      <label id="expLabel">Bright</label>
-      <input type="range" id="exposureSlider">
-    </div>
-
-    <button id="snapBtn">📸 Take Photo</button>
     <p id="status">Tap screen to activate audio & remote</p>
   </div>
 
   <audio id="silentAudio" loop src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="></audio>
 
   <script>
+    // -------------------------------------------------------------
+    // 1. INLINE MANIFEST CREATION (Guarantees PWA requirements)
+    // -------------------------------------------------------------
+    const manifest = {
+      name: "Remote Camera PWA",
+      short_name: "CameraPWA",
+      start_url: "./",
+      display: "standalone",
+      background_color: "#000000",
+      theme_color: "#000000",
+      icons: [
+        {
+          src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📸</text></svg>",
+          sizes: "192x192 512x512",
+          type: "image/svg+xml"
+        }
+      ]
+    };
+    const stringManifest = JSON.stringify(manifest);
+    const blob = new Blob([stringManifest], {type: 'application/json'});
+    const manifestURL = URL.createObjectURL(blob);
+    document.getElementById('manifestLink').setAttribute('href', manifestURL);
+
+    // -------------------------------------------------------------
+    // 2. SERVICE WORKER REGISTRATION (Mandatory for PWA Install)
+    // -------------------------------------------------------------
+    if ('serviceWorker' in navigator) {
+      const swCode = `
+        self.addEventListener('install', (e) => self.skipWaiting());
+        self.addEventListener('activate', (e) => self.clients.claim());
+        self.addEventListener('fetch', (e) => {
+          e.respondWith(fetch(e.request).catch(() => new Response('Offline')));
+        });
+      `;
+      const swBlob = new Blob([swCode], { type: 'text/javascript' });
+      const swUrl = URL.createObjectURL(swBlob);
+      navigator.serviceWorker.register(swUrl).catch(err => console.log('SW registration failed', err));
+    }
+
+    // -------------------------------------------------------------
+    // 3. PWA INSTALL BUTTON LOGIC & AUTO-HIDE
+    // -------------------------------------------------------------
+    let deferredPrompt;
+    const installBtn = document.getElementById('installBtn');
+
+    // Check if app is already running in installed mode (standalone)
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+
+    if (isStandalone) {
+      installBtn.style.display = 'none'; // Already installed & running as app
+    } else {
+      window.addEventListener('beforeinstallprompt', (e) => {
+        // Prevent Chrome 67 and earlier from automatically showing the prompt
+        e.preventDefault();
+        deferredPrompt = e;
+        // Show the install button
+        installBtn.style.display = 'block';
+      });
+
+      installBtn.addEventListener('click', async () => {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        if (outcome === 'accepted') {
+          installBtn.style.display = 'none';
+        }
+        deferredPrompt = null;
+      });
+    }
+
+    window.addEventListener('appinstalled', () => {
+      installBtn.style.display = 'none';
+      deferredPrompt = null;
+      console.log('PWA installed successfully');
+    });
+
+    // -------------------------------------------------------------
+    // 4. CAMERA & SHUTTER LOGIC
+    // -------------------------------------------------------------
     const video = document.getElementById('viewfinder');
     const canvas = document.getElementById('photoCanvas');
     const status = document.getElementById('status');
     const silentAudio = document.getElementById('silentAudio');
-    
-    const zoomSlider = document.getElementById('zoomSlider');
-    const zoomGroup = document.getElementById('zoomControlGroup');
-    const zoomLabel = document.getElementById('zoomLabel');
-    
-    const exposureSlider = document.getElementById('exposureSlider');
-    const exposureGroup = document.getElementById('exposureControlGroup');
-    const expLabel = document.getElementById('expLabel');
-
-    let track = null;
-    let capabilities = null;
     let audioCtx = null;
 
-    // 1. Generate Instant Shutter Click Sound via Web Audio API
     function playShutterSound() {
       try {
-        if (!audioCtx) {
-          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        if (audioCtx.state === 'suspended') {
-          audioCtx.resume();
-        }
-
-        // Create a sharp mechanical click sound effect
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
-        
         osc.type = 'triangle';
         osc.frequency.setValueAtTime(800, audioCtx.currentTime);
         osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.08);
-        
         gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.08);
-        
         osc.connect(gain);
         gain.connect(audioCtx.destination);
-        
         osc.start();
         osc.stop(audioCtx.currentTime + 0.08);
-      } catch (e) {
-        console.log("Audio context error", e);
-      }
+      } catch (e) {}
     }
 
-    // 2. Initialize Camera & Advanced Constraints
     async function initCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -152,88 +198,35 @@
           audio: false
         });
         video.srcObject = stream;
-        track = stream.getVideoTracks()[0];
-        capabilities = track.getCapabilities();
-
-        if (capabilities.zoom) {
-          zoomGroup.style.display = 'flex';
-          zoomSlider.min = capabilities.zoom.min;
-          zoomSlider.max = capabilities.zoom.max;
-          zoomSlider.step = capabilities.zoom.step;
-          zoomSlider.value = track.getSettings().zoom || capabilities.zoom.min;
-          
-          zoomSlider.oninput = async () => {
-            const val = parseFloat(zoomSlider.value);
-            zoomLabel.innerText = `Zoom: ${val.toFixed(1)}x`;
-            await track.applyConstraints({ advanced: [{ zoom: val }] });
-          };
-        }
-
-        if (capabilities.exposureCompensation) {
-          exposureGroup.style.display = 'flex';
-          exposureSlider.min = capabilities.exposureCompensation.min;
-          exposureSlider.max = capabilities.exposureCompensation.max;
-          exposureSlider.step = capabilities.exposureCompensation.step;
-          exposureSlider.value = track.getSettings().exposureCompensation || 0;
-
-          exposureSlider.oninput = async () => {
-            const val = parseFloat(exposureSlider.value);
-            expLabel.innerText = `Bright: ${val > 0 ? '+' + val : val}`;
-            await track.applyConstraints({ advanced: [{ exposureCompensation: val }] });
-          };
-        }
       } catch (err) {
         status.innerText = "Camera error: " + err.message;
       }
     }
 
-    // 3. Tap-to-Focus
-    document.getElementById('viewfinderWrapper').addEventListener('click', async () => {
-      if (!track || !capabilities || !capabilities.focusMode) return;
-      try {
-        await track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] });
-        status.innerText = "🎯 Focused";
-        setTimeout(() => status.innerText = "Ready • Press earbud to snap", 1500);
-      } catch (err) {}
-    });
-
-    // 4. Capture Photo & Play Sound
     function takePhoto() {
       if (!video.videoWidth) return;
-      
-      // Play instant mechanical click sound to your earphones
       playShutterSound();
-
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0);
-
       const link = document.createElement('a');
       link.href = canvas.toDataURL('image/jpeg', 0.95);
       link.download = `photo_${Date.now()}.jpg`;
       link.click();
-
-      status.innerText = "✨ Photo Saved & Shutter Clicked!";
+      status.innerText = "✨ Photo Saved!";
       setTimeout(() => status.innerText = "Ready • Press earbud to snap", 2000);
     }
 
     document.getElementById('snapBtn').onclick = takePhoto;
-
-    // 5. Activate Remote & Audio Context on First Tap
     document.body.addEventListener('click', () => {
       silentAudio.play().catch(() => {});
-      if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      status.innerText = "Ready • Press earbud Play/Pause to snap";
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }, { once: true });
 
     if ('mediaSession' in navigator) {
       navigator.mediaSession.setActionHandler('play', takePhoto);
       navigator.mediaSession.setActionHandler('pause', takePhoto);
-      navigator.mediaSession.setActionHandler('previoustrack', takePhoto);
-      navigator.mediaSession.setActionHandler('nexttrack', takePhoto);
     }
 
     initCamera();
