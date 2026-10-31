@@ -11,7 +11,7 @@
       margin: 0;
       background: #000;
       color: #fff;
-      font-family: system-ui, sans-serif;
+      font-family: system-ui, -apple-system, sans-serif;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -26,7 +26,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: #000;
+      background: #050505;
     }
     video {
       width: 100%;
@@ -40,17 +40,18 @@
       bottom: 20px;
       width: 90%;
       max-width: 400px;
-      background: rgba(0, 0, 0, 0.7);
+      background: rgba(0, 0, 0, 0.75);
       backdrop-filter: blur(10px);
       padding: 15px;
       border-radius: 16px;
       display: flex;
       flex-direction: column;
       gap: 10px;
+      box-sizing: border-box;
     }
     .btn-row { display: flex; gap: 10px; }
     button {
-      padding: 12px;
+      padding: 14px;
       font-size: 15px;
       font-weight: bold;
       border: none;
@@ -61,7 +62,7 @@
       flex-grow: 1;
     }
     #installBtn { background: #34c759; display: none; }
-    #status { font-size: 12px; color: #ff9f0a; text-align: center; }
+    #status { font-size: 12px; color: #ff9f0a; text-align: center; margin: 0; }
   </style>
 </head>
 <body>
@@ -74,15 +75,15 @@
   <div class="controls-overlay">
     <div class="btn-row">
       <button id="snapBtn">📸 Take Photo</button>
-      <button id="installBtn">📲 Install</button>
+      <button id="installBtn">📲 Install App</button>
     </div>
-    <p id="status">Requesting camera...</p>
+    <p id="status">Requesting camera access...</p>
   </div>
 
   <audio id="silentAudio" loop src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="></audio>
 
   <script>
-    // 1. Service Worker Registration
+    // 1. Register Service Worker for PWA compliance
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(() => {});
     }
@@ -103,32 +104,43 @@
       deferredPrompt = null;
     });
 
-    // 3. Reliable Camera Initialization
+    // 3. Fallback Camera Initializer
     const video = document.getElementById('viewfinder');
     const canvas = document.getElementById('photoCanvas');
     const status = document.getElementById('status');
     const silentAudio = document.getElementById('silentAudio');
     let audioCtx = null;
+    let activeStream = null;
 
     async function initCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
-          audio: false
-        });
-        
-        video.srcObject = stream;
-        
-        // Explicitly play video stream to prevent black screen on Android
-        await video.play();
-        
-        status.innerText = "Ready • Press earbud to snap";
-      } catch (err) {
-        status.innerText = "Camera Error: " + err.message;
+      const constraintsToTry = [
+        { video: { facingMode: { ideal: "environment" } }, audio: false },
+        { video: { facingMode: "user" }, audio: false },
+        { video: true, audio: false }
+      ];
+
+      for (const constraints of constraintsToTry) {
+        try {
+          if (activeStream) {
+            activeStream.getTracks().forEach(track => track.stop());
+          }
+          activeStream = await navigator.mediaDevices.getUserMedia(constraints);
+          video.srcObject = activeStream;
+          
+          // Force playback on Android webview engine
+          await video.play();
+          
+          status.innerText = "Ready • Tap screen or press earbud";
+          return; // Success: exit function
+        } catch (err) {
+          console.warn("Constraint attempt failed:", constraints, err);
+        }
       }
+
+      status.innerText = "Camera Access Blocked. Check site permissions.";
     }
 
-    // 4. Shutter & Sound Feedback
+    // 4. Shutter Sound Synthesizer
     function playShutterSound() {
       try {
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -147,8 +159,12 @@
       } catch (e) {}
     }
 
+    // 5. Photo Capture
     function takePhoto() {
-      if (!video.videoWidth) return;
+      if (!video.videoWidth || !video.videoHeight) {
+        status.innerText = "Error: Video stream not ready";
+        return;
+      }
       
       playShutterSound();
       
@@ -163,22 +179,29 @@
       link.click();
       
       status.innerText = "✨ Photo Saved!";
-      setTimeout(() => status.innerText = "Ready • Press earbud to snap", 2000);
+      setTimeout(() => {
+        if (video.paused) video.play().catch(() => {});
+        status.innerText = "Ready • Press earbud to snap";
+      }, 1500);
     }
 
     document.getElementById('snapBtn').onclick = takePhoto;
 
-    // 5. Remote & Audio Context Activation
+    // 6. Media Key Session Listener
     document.body.addEventListener('click', () => {
       silentAudio.play().catch(() => {});
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (video.paused) video.play().catch(() => {});
     }, { once: true });
 
     if ('mediaSession' in navigator) {
       navigator.mediaSession.setActionHandler('play', takePhoto);
       navigator.mediaSession.setActionHandler('pause', takePhoto);
+      navigator.mediaSession.setActionHandler('previoustrack', takePhoto);
+      navigator.mediaSession.setActionHandler('nexttrack', takePhoto);
     }
 
+    // Launch camera stream
     initCamera();
   </script>
 </body>
