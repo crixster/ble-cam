@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Earphone Remote Camera PWA</title>
+  <style>
+    body {
+      margin: 0;
+      background: #0f0f0f;
+      color: #fff;
+      font-family: system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      text-align: center;
+    }
+    video {
+      width: 90%;
+      max-width: 450px;
+      border-radius: 16px;
+      background: #000;
+      border: 2px solid #333;
+    }
+    canvas { display: none; }
+    .btn-container { margin-top: 15px; display: flex; gap: 10px; }
+    button {
+      padding: 12px 24px;
+      font-size: 16px;
+      font-weight: bold;
+      border: none;
+      border-radius: 8px;
+      background: #007aff;
+      color: white;
+      cursor: pointer;
+    }
+    #status { margin-top: 12px; color: #aaa; font-size: 14px; }
+  </style>
+</head>
+<body>
+
+  <video id="viewfinder" autoplay playsinline></video>
+  <canvas id="photoCanvas"></canvas>
+
+  <div class="btn-container">
+    <button id="snapBtn">📸 Take Photo</button>
+  </div>
+  <p id="status">Tap screen once to activate remote, then press your earbud Play/Pause button</p>
+
+  <!-- Silent audio loop required to keep browser media session active -->
+  <audio id="silentAudio" loop src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="></audio>
+
+  <script>
+    const video = document.getElementById('viewfinder');
+    const canvas = document.getElementById('photoCanvas');
+    const status = document.getElementById('status');
+    const silentAudio = document.getElementById('silentAudio');
+
+    // 1. Start Camera Feed at High Resolution
+    async function initCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false
+        });
+        video.srcObject = stream;
+      } catch (err) {
+        status.innerText = "Camera permission denied or unavailable.";
+      }
+    }
+
+    // 2. Capture and Save Photo
+    function takePhoto() {
+      if (!video.videoWidth) return;
+      
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0);
+
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = `photo_${Date.now()}.jpg`;
+      link.click();
+
+      status.innerText = "✨ Photo captured & downloaded!";
+      setTimeout(() => {
+        status.innerText = "Ready. Press earbud Play/Pause button to shoot.";
+      }, 2000);
+    }
+
+    document.getElementById('snapBtn').onclick = takePhoto;
+
+    // 3. Bluetooth Earphone Integration via Media Session API
+    document.body.addEventListener('click', () => {
+      // Browsers require a user interaction to allow media session locking
+      silentAudio.play().catch(() => {});
+      status.innerText = "Remote active! Press your earbud Play/Pause button.";
+    }, { once: true });
+
+    if ('mediaSession' in navigator) {
+      // Map earphone click events (Play/Pause/Toggle) to trigger the photo capture
+      navigator.mediaSession.setActionHandler('play', takePhoto);
+      navigator.mediaSession.setActionHandler('pause', takePhoto);
+      navigator.mediaSession.setActionHandler('previoustrack', takePhoto);
+      navigator.mediaSession.setActionHandler('nexttrack', takePhoto);
+    }
+
+    initCamera();
+  </script>
+</body>
+</html>
