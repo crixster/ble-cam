@@ -1,302 +1,280 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Remote Camera PWA</title>
-​<!-- PWA Manifest & Meta Tags -->
-<link rel="manifest" href="./manifest.json">
-<meta name="theme-color" content="#000000">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="apple-touch-icon" href="./icon.svg">
-​<style>
-* {
-box-sizing: border-box;
-user-select: none;
-}
-body {
-margin: 0;
-background: #000;
-color: #fff;
-font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-display: flex;
-flex-direction: column;
-align-items: center;
-justify-content: space-between;
-height: 100vh;
-overflow: hidden;
-}
-.viewfinder-container {
-position: relative;
-width: 100%;
-flex-grow: 1;
-display: flex;
-align-items: center;
-justify-content: center;
-overflow: hidden;
-cursor: pointer;
-}
-video {
-width: 100%;
-height: 100%;
-object-fit: cover;
-}
-canvas { display: none; }
-​/* Visual tap-to-focus ring */
-.focus-ring {
-position: absolute;
-width: 60px;
-height: 60px;
-border: 2px solid #007aff;
-border-radius: 50%;
-transform: translate(-50%, -50%) scale(1.5);
-opacity: 0;
-transition: transform 0.2s ease-out, opacity 0.2s ease-out;
-pointer-events: none;
-}
-.focus-ring.active {
-transform: translate(-50%, -50%) scale(1);
-opacity: 1;
-}
-​.controls-overlay {
-position: absolute;
-bottom: 20px;
-width: 90%;
-max-width: 420px;
-background: rgba(18, 18, 18, 0.75);
-backdrop-filter: blur(12px);
--webkit-backdrop-filter: blur(12px);
-padding: 16px;
-border-radius: 20px;
-border: 1px solid rgba(255, 255, 255, 0.1);
-display: flex;
-flex-direction: column;
-gap: 12px;
-box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-}
-​.slider-group {
-display: flex;
-align-items: center;
-gap: 10px;
-font-size: 13px;
-color: #ccc;
-}
-.slider-group label { min-width: 75px; font-weight: 500; }
-input[type=range] {
-flex-grow: 1;
-accent-color: #007aff;
-height: 6px;
-background: rgba(255, 255, 255, 0.2);
-border-radius: 3px;
-outline: none;
-}
-​.btn-row {
-display: flex;
-gap: 10px;
-}
-button {
-padding: 14px 20px;
-font-size: 15px;
-font-weight: 600;
-border: none;
-border-radius: 50px;
-background: #007aff;
-color: white;
-cursor: pointer;
-flex-grow: 1;
-transition: background 0.2s, transform 0.1s;
-}
-button:active {
-transform: scale(0.98);
-}
-#installBtn {
-background: #34c759;
-display: none; /* Controlled via JS */
-}
-#status {
-font-size: 12px;
-color: #aaa;
-text-align: center;
-margin: 0;
-}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Remote Camera PWA</title>
+  
+  <!-- Explicit relative link to external manifest.json -->
+  <link rel="manifest" href="./manifest.json">
+
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      color: #fff;
+      font-family: system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .viewfinder-container {
+      position: relative;
+      width: 100%;
+      flex-grow: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    video { width: 100%; height: 100%; object-fit: cover; }
+    canvas { display: none; }
+    
+    .controls-overlay {
+      position: absolute;
+      bottom: 20px;
+      width: 90%;
+      max-width: 400px;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(10px);
+      padding: 15px;
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .slider-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+    }
+    .slider-group label { min-width: 70px; }
+    input[type=range] { flex-grow: 1; accent-color: #007aff; }
+
+    .btn-row {
+      display: flex;
+      gap: 10px;
+    }
+    button {
+      padding: 12px 20px;
+      font-size: 15px;
+      font-weight: bold;
+      border: none;
+      border-radius: 50px;
+      background: #007aff;
+      color: white;
+      cursor: pointer;
+      flex-grow: 1;
+    }
+    #installBtn {
+      background: #34c759;
+      display: none; /* Hidden by default until browser fires install prompt */
+    }
+    #status { font-size: 12px; color: #aaa; text-align: center; }
+  </style>
 </head>
 <body>
-​<div class="viewfinder-container" id="viewfinderWrapper">
-<video id="viewfinder" autoplay playsinline></video>
-<canvas id="photoCanvas"></canvas>
-<div class="focus-ring" id="focusRing"></div>
-</div>
-​<div class="controls-overlay">
-<!-- Zoom Control Slider -->
-<div class="slider-group" id="zoomControlGroup" style="display:none;">
-<label id="zoomLabel">Zoom: 1.0x</label>
-<input type="range" id="zoomSlider" min="1" max="5" step="0.1" value="1">
-</div>
-​<!-- Exposure / Brightness Slider -->
-<div class="slider-group" id="exposureControlGroup" style="display:none;">
-<label id="expLabel">Bright: 0</label>
-<input type="range" id="exposureSlider">
-</div>
-​<div class="btn-row">
-<button id="snapBtn">📸 Take Photo</button>
-<button id="installBtn">📲 Install App</button>
-</div>
-<p id="status">Tap screen to activate audio & remote</p>
-</div>
-​<!-- Silent background loop to retain MediaSession lock on Android -->
-<audio id="silentAudio" loop src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="></audio>
-​<script>
-// 1. REGISTER SERVICE WORKER FOR PWA INSTALLABILITY
-if ('serviceWorker' in navigator) {
-window.addEventListener('load', () => {
-navigator.serviceWorker.register('./sw.js', { scope: './' })
-.then(reg => console.log('Service Worker active!', reg))
-.catch(err => console.log('Service Worker failed:', err));
-});
-}
-​// 2. PWA INSTALL PROMPT & AUTOMATIC HIDE LOGIC
-let deferredPrompt;
-const installBtn = document.getElementById('installBtn');
-const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
-​if (!isStandalone) {
-window.addEventListener('beforeinstallprompt', (e) => {
-e.preventDefault();
-deferredPrompt = e;
-installBtn.style.display = 'block';
-});
-​installBtn.addEventListener('click', async () => {
-if (!deferredPrompt) return;
-deferredPrompt.prompt();
-const { outcome } = await deferredPrompt.userChoice;
-if (outcome === 'accepted') {
-installBtn.style.display = 'none';
-}
-deferredPrompt = null;
-});
-}
-​window.addEventListener('appinstalled', () => {
-installBtn.style.display = 'none';
-deferredPrompt = null;
-});
-​// 3. CAMERA & SENSOR HARDWARE CONTROLS
-const video = document.getElementById('viewfinder');
-const canvas = document.getElementById('photoCanvas');
-const status = document.getElementById('status');
-const silentAudio = document.getElementById('silentAudio');
-const focusRing = document.getElementById('focusRing');
-​const zoomSlider = document.getElementById('zoomSlider');
-const zoomGroup = document.getElementById('zoomControlGroup');
-const zoomLabel = document.getElementById('zoomLabel');
-​const exposureSlider = document.getElementById('exposureSlider');
-const exposureGroup = document.getElementById('exposureControlGroup');
-const expLabel = document.getElementById('expLabel');
-​let track = null;
-let capabilities = null;
-let audioCtx = null;
-​// Synthetic mechanical shutter sound using Web Audio API
-function playShutterSound() {
-try {
-if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-if (audioCtx.state === 'suspended') audioCtx.resume();
-​const osc = audioCtx.createOscillator();
-const gain = audioCtx.createGain();
-​osc.type = 'triangle';
-osc.frequency.setValueAtTime(900, audioCtx.currentTime);
-osc.frequency.exponentialRampToValueAtTime(120, audioCtx.currentTime + 0.07);
-​gain.gain.setValueAtTime(0.6, audioCtx.currentTime);
-gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.07);
-​osc.connect(gain);
-gain.connect(audioCtx.destination);
-​osc.start();
-osc.stop(audioCtx.currentTime + 0.07);
-} catch (e) {}
-}
-​// Camera Stream Initialization
-async function initCamera() {
-try {
-const stream = await navigator.mediaDevices.getUserMedia({
-video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-audio: false
-});
-video.srcObject = stream;
-track = stream.getVideoTracks()[0];
-capabilities = track.getCapabilities();
-​// Hardware Zoom Integration
-if (capabilities.zoom) {
-zoomGroup.style.display = 'flex';
-zoomSlider.min = capabilities.zoom.min;
-zoomSlider.max = capabilities.zoom.max;
-zoomSlider.step = capabilities.zoom.step;
-zoomSlider.value = track.getSettings().zoom || capabilities.zoom.min;
-​zoomSlider.oninput = async () => {
-const val = parseFloat(zoomSlider.value);
-zoomLabel.innerText = Zoom: ${val.toFixed(1)}x;
-await track.applyConstraints({ advanced: [{ zoom: val }] });
-};
-}
-​// Hardware Exposure Integration
-if (capabilities.exposureCompensation) {
-exposureGroup.style.display = 'flex';
-exposureSlider.min = capabilities.exposureCompensation.min;
-exposureSlider.max = capabilities.exposureCompensation.max;
-exposureSlider.step = capabilities.exposureCompensation.step;
-exposureSlider.value = track.getSettings().exposureCompensation || 0;
-​exposureSlider.oninput = async () => {
-const val = parseFloat(exposureSlider.value);
-expLabel.innerText = Bright: ${val > 0 ? '+' + val : val};
-await track.applyConstraints({ advanced: [{ exposureCompensation: val }] });
-};
-}
-} catch (err) {
-status.innerText = "Camera error: " + err.message;
-}
-}
-​// Tap-to-Focus UI and Trigger
-document.getElementById('viewfinderWrapper').addEventListener('click', async (e) => {
-// Visual focus ring positioning
-const rect = e.currentTarget.getBoundingClientRect();
-focusRing.style.left = ${e.clientX - rect.left}px;
-focusRing.style.top = ${e.clientY - rect.top}px;
-focusRing.classList.add('active');
-setTimeout(() => focusRing.classList.remove('active'), 600);
-​if (!track || !capabilities || !capabilities.focusMode) return;
-try {
-await track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] });
-status.innerText = "🎯 Focused";
-setTimeout(() => status.innerText = "Ready • Press earbud to snap", 1500);
-} catch (err) {}
-});
-​// Capture & Save Photo
-function takePhoto() {
-if (!video.videoWidth) return;
-​playShutterSound();
-​canvas.width = video.videoWidth;
-canvas.height = video.videoHeight;
-const ctx = canvas.getContext('2d');
-ctx.drawImage(video, 0, 0);
-​const link = document.createElement('a');
-link.href = canvas.toDataURL('image/jpeg', 0.95);
-link.download = photo_${Date.now()}.jpg;
-link.click();
-​status.innerText = "✨ Photo Saved!";
-setTimeout(() => status.innerText = "Ready • Press earbud to snap", 2000);
-}
-​document.getElementById('snapBtn').onclick = takePhoto;
-​// Activate Remote & Audio Context on First Tap
-document.body.addEventListener('click', () => {
-silentAudio.play().catch(() => {});
-if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-}, { once: true });
-​// Earphone Media Remote Action Handler
-if ('mediaSession' in navigator) {
-navigator.mediaSession.setActionHandler('play', takePhoto);
-navigator.mediaSession.setActionHandler('pause', takePhoto);
-navigator.mediaSession.setActionHandler('previoustrack', takePhoto);
-navigator.mediaSession.setActionHandler('nexttrack', takePhoto);
-}
-​initCamera();
-</script>
+
+  <div class="viewfinder-container" id="viewfinderWrapper">
+    <video id="viewfinder" autoplay playsinline></video>
+    <canvas id="photoCanvas"></canvas>
+  </div>
+
+  <div class="controls-overlay">
+    <!-- Zoom Control -->
+    <div class="slider-group" id="zoomControlGroup" style="display:none;">
+      <label id="zoomLabel">Zoom: 1x</label>
+      <input type="range" id="zoomSlider" min="1" max="5" step="0.1" value="1">
+    </div>
+
+    <!-- Exposure Control -->
+    <div class="slider-group" id="exposureControlGroup" style="display:none;">
+      <label id="expLabel">Bright</label>
+      <input type="range" id="exposureSlider">
+    </div>
+
+    <div class="btn-row">
+      <button id="snapBtn">📸 Take Photo</button>
+      <button id="installBtn">📲 Install App</button>
+    </div>
+    <p id="status">Tap screen to activate audio & remote</p>
+  </div>
+
+  <audio id="silentAudio" loop src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="></audio>
+
+  <script>
+    // -------------------------------------------------------------
+    // 1. SERVICE WORKER REGISTRATION (Scoped to repo root)
+    // -------------------------------------------------------------
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js', { scope: './' })
+          .then(reg => console.log('SW Registered:', reg.scope))
+          .catch(err => console.error('SW Registration Failed:', err));
+      });
+    }
+
+    // -------------------------------------------------------------
+    // 2. PWA INSTALL BUTTON LOGIC & AUTO-HIDE
+    // -------------------------------------------------------------
+    let deferredPrompt;
+    const installBtn = document.getElementById('installBtn');
+
+    // Check if app is already running in standalone installed mode
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+
+    if (isStandalone) {
+      installBtn.style.display = 'none';
+    } else {
+      window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        installBtn.style.display = 'block'; // Reveal install button when criteria met
+      });
+
+      installBtn.addEventListener('click', async () => {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        if (outcome === 'accepted') {
+          installBtn.style.display = 'none';
+        }
+        deferredPrompt = null;
+      });
+    }
+
+    window.addEventListener('appinstalled', () => {
+      installBtn.style.display = 'none';
+      deferredPrompt = null;
+    });
+
+    // -------------------------------------------------------------
+    // 3. CAMERA & CONTROLS LOGIC
+    // -------------------------------------------------------------
+    const video = document.getElementById('viewfinder');
+    const canvas = document.getElementById('photoCanvas');
+    const status = document.getElementById('status');
+    const silentAudio = document.getElementById('silentAudio');
+    
+    const zoomSlider = document.getElementById('zoomSlider');
+    const zoomGroup = document.getElementById('zoomControlGroup');
+    const zoomLabel = document.getElementById('zoomLabel');
+    
+    const exposureSlider = document.getElementById('exposureSlider');
+    const exposureGroup = document.getElementById('exposureControlGroup');
+    const expLabel = document.getElementById('expLabel');
+
+    let track = null;
+    let capabilities = null;
+    let audioCtx = null;
+
+    function playShutterSound() {
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.08);
+        gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.08);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.08);
+      } catch (e) {}
+    }
+
+    async function initCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false
+        });
+        video.srcObject = stream;
+        track = stream.getVideoTracks()[0];
+        capabilities = track.getCapabilities();
+
+        if (capabilities.zoom) {
+          zoomGroup.style.display = 'flex';
+          zoomSlider.min = capabilities.zoom.min;
+          zoomSlider.max = capabilities.zoom.max;
+          zoomSlider.step = capabilities.zoom.step;
+          zoomSlider.value = track.getSettings().zoom || capabilities.zoom.min;
+          
+          zoomSlider.oninput = async () => {
+            const val = parseFloat(zoomSlider.value);
+            zoomLabel.innerText = `Zoom: ${val.toFixed(1)}x`;
+            await track.applyConstraints({ advanced: [{ zoom: val }] });
+          };
+        }
+
+        if (capabilities.exposureCompensation) {
+          exposureGroup.style.display = 'flex';
+          exposureSlider.min = capabilities.exposureCompensation.min;
+          exposureSlider.max = capabilities.exposureCompensation.max;
+          exposureSlider.step = capabilities.exposureCompensation.step;
+          exposureSlider.value = track.getSettings().exposureCompensation || 0;
+
+          exposureSlider.oninput = async () => {
+            const val = parseFloat(exposureSlider.value);
+            expLabel.innerText = `Bright: ${val > 0 ? '+' + val : val}`;
+            await track.applyConstraints({ advanced: [{ exposureCompensation: val }] });
+          };
+        }
+      } catch (err) {
+        status.innerText = "Camera error: " + err.message;
+      }
+    }
+
+    document.getElementById('viewfinderWrapper').addEventListener('click', async () => {
+      if (!track || !capabilities || !capabilities.focusMode) return;
+      try {
+        await track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] });
+        status.innerText = "🎯 Focused";
+        setTimeout(() => status.innerText = "Ready • Press earbud to snap", 1500);
+      } catch (err) {}
+    });
+
+    function takePhoto() {
+      if (!video.videoWidth) return;
+      playShutterSound();
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0);
+
+      const link = document.createElement('a');
+      link.href = canvas.toDataURL('image/jpeg', 0.95);
+      link.download = `photo_${Date.now()}.jpg`;
+      link.click();
+
+      status.innerText = "✨ Photo Saved & Shutter Clicked!";
+      setTimeout(() => status.innerText = "Ready • Press earbud to snap", 2000);
+    }
+
+    document.getElementById('snapBtn').onclick = takePhoto;
+
+    document.body.addEventListener('click', () => {
+      silentAudio.play().catch(() => {});
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      status.innerText = "Ready • Press earbud Play/Pause to snap";
+    }, { once: true });
+
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.setActionHandler('press', takePhoto);
+      navigator.mediaSession.setActionHandler('play', takePhoto);
+      navigator.mediaSession.setActionHandler('pause', takePhoto);
+      navigator.mediaSession.setActionHandler('previoustrack', takePhoto);
+      navigator.mediaSession.setActionHandler('nexttrack', takePhoto);
+    }
+
+    initCamera();
+  </script>
 </body>
 </html>
