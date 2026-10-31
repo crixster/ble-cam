@@ -3,53 +3,96 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Earphone Remote Camera PWA</title>
+  <title>PWA Camera with Sound Feedback</title>
   <style>
     body {
       margin: 0;
-      background: #0f0f0f;
+      background: #000;
       color: #fff;
       font-family: system-ui, sans-serif;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      justify-content: space-between;
       height: 100vh;
-      text-align: center;
+      overflow: hidden;
+    }
+    .viewfinder-container {
+      position: relative;
+      width: 100%;
+      flex-grow: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
     }
     video {
-      width: 90%;
-      max-width: 450px;
-      border-radius: 16px;
-      background: #000;
-      border: 2px solid #333;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
     }
     canvas { display: none; }
-    .btn-container { margin-top: 15px; display: flex; gap: 10px; }
+    
+    .controls-overlay {
+      position: absolute;
+      bottom: 20px;
+      width: 90%;
+      max-width: 400px;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(10px);
+      padding: 15px;
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .slider-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+    }
+    .slider-group label { min-width: 70px; }
+    input[type=range] { flex-grow: 1; accent-color: #007aff; }
+    
     button {
       padding: 12px 24px;
       font-size: 16px;
       font-weight: bold;
       border: none;
-      border-radius: 8px;
+      border-radius: 50px;
       background: #007aff;
       color: white;
       cursor: pointer;
+      width: 100%;
     }
-    #status { margin-top: 12px; color: #aaa; font-size: 14px; }
+    #status { font-size: 12px; color: #aaa; text-align: center; }
   </style>
 </head>
 <body>
 
-  <video id="viewfinder" autoplay playsinline></video>
-  <canvas id="photoCanvas"></canvas>
-
-  <div class="btn-container">
-    <button id="snapBtn">📸 Take Photo</button>
+  <div class="viewfinder-container" id="viewfinderWrapper">
+    <video id="viewfinder" autoplay playsinline></video>
+    <canvas id="photoCanvas"></canvas>
   </div>
-  <p id="status">Tap screen once to activate remote, then press your earbud Play/Pause button</p>
 
-  <!-- Silent audio loop required to keep browser media session active -->
+  <div class="controls-overlay">
+    <!-- Zoom Control -->
+    <div class="slider-group" id="zoomControlGroup" style="display:none;">
+      <label id="zoomLabel">Zoom: 1x</label>
+      <input type="range" id="zoomSlider" min="1" max="5" step="0.1" value="1">
+    </div>
+
+    <!-- Exposure / Brightness Control -->
+    <div class="slider-group" id="exposureControlGroup" style="display:none;">
+      <label id="expLabel">Bright</label>
+      <input type="range" id="exposureSlider">
+    </div>
+
+    <button id="snapBtn">📸 Take Photo</button>
+    <p id="status">Tap screen to activate audio & remote</p>
+  </div>
+
   <audio id="silentAudio" loop src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="></audio>
 
   <script>
@@ -57,8 +100,51 @@
     const canvas = document.getElementById('photoCanvas');
     const status = document.getElementById('status');
     const silentAudio = document.getElementById('silentAudio');
+    
+    const zoomSlider = document.getElementById('zoomSlider');
+    const zoomGroup = document.getElementById('zoomControlGroup');
+    const zoomLabel = document.getElementById('zoomLabel');
+    
+    const exposureSlider = document.getElementById('exposureSlider');
+    const exposureGroup = document.getElementById('exposureControlGroup');
+    const expLabel = document.getElementById('expLabel');
 
-    // 1. Start Camera Feed at High Resolution
+    let track = null;
+    let capabilities = null;
+    let audioCtx = null;
+
+    // 1. Generate Instant Shutter Click Sound via Web Audio API
+    function playShutterSound() {
+      try {
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+
+        // Create a sharp mechanical click sound effect
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.08);
+        
+        gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.08);
+        
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.08);
+      } catch (e) {
+        console.log("Audio context error", e);
+      }
+    }
+
+    // 2. Initialize Camera & Advanced Constraints
     async function initCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -66,43 +152,84 @@
           audio: false
         });
         video.srcObject = stream;
+        track = stream.getVideoTracks()[0];
+        capabilities = track.getCapabilities();
+
+        if (capabilities.zoom) {
+          zoomGroup.style.display = 'flex';
+          zoomSlider.min = capabilities.zoom.min;
+          zoomSlider.max = capabilities.zoom.max;
+          zoomSlider.step = capabilities.zoom.step;
+          zoomSlider.value = track.getSettings().zoom || capabilities.zoom.min;
+          
+          zoomSlider.oninput = async () => {
+            const val = parseFloat(zoomSlider.value);
+            zoomLabel.innerText = `Zoom: ${val.toFixed(1)}x`;
+            await track.applyConstraints({ advanced: [{ zoom: val }] });
+          };
+        }
+
+        if (capabilities.exposureCompensation) {
+          exposureGroup.style.display = 'flex';
+          exposureSlider.min = capabilities.exposureCompensation.min;
+          exposureSlider.max = capabilities.exposureCompensation.max;
+          exposureSlider.step = capabilities.exposureCompensation.step;
+          exposureSlider.value = track.getSettings().exposureCompensation || 0;
+
+          exposureSlider.oninput = async () => {
+            const val = parseFloat(exposureSlider.value);
+            expLabel.innerText = `Bright: ${val > 0 ? '+' + val : val}`;
+            await track.applyConstraints({ advanced: [{ exposureCompensation: val }] });
+          };
+        }
       } catch (err) {
-        status.innerText = "Camera permission denied or unavailable.";
+        status.innerText = "Camera error: " + err.message;
       }
     }
 
-    // 2. Capture and Save Photo
+    // 3. Tap-to-Focus
+    document.getElementById('viewfinderWrapper').addEventListener('click', async () => {
+      if (!track || !capabilities || !capabilities.focusMode) return;
+      try {
+        await track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] });
+        status.innerText = "🎯 Focused";
+        setTimeout(() => status.innerText = "Ready • Press earbud to snap", 1500);
+      } catch (err) {}
+    });
+
+    // 4. Capture Photo & Play Sound
     function takePhoto() {
       if (!video.videoWidth) return;
       
+      // Play instant mechanical click sound to your earphones
+      playShutterSound();
+
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0);
 
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
       const link = document.createElement('a');
-      link.href = dataUrl;
+      link.href = canvas.toDataURL('image/jpeg', 0.95);
       link.download = `photo_${Date.now()}.jpg`;
       link.click();
 
-      status.innerText = "✨ Photo captured & downloaded!";
-      setTimeout(() => {
-        status.innerText = "Ready. Press earbud Play/Pause button to shoot.";
-      }, 2000);
+      status.innerText = "✨ Photo Saved & Shutter Clicked!";
+      setTimeout(() => status.innerText = "Ready • Press earbud to snap", 2000);
     }
 
     document.getElementById('snapBtn').onclick = takePhoto;
 
-    // 3. Bluetooth Earphone Integration via Media Session API
+    // 5. Activate Remote & Audio Context on First Tap
     document.body.addEventListener('click', () => {
-      // Browsers require a user interaction to allow media session locking
       silentAudio.play().catch(() => {});
-      status.innerText = "Remote active! Press your earbud Play/Pause button.";
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      status.innerText = "Ready • Press earbud Play/Pause to snap";
     }, { once: true });
 
     if ('mediaSession' in navigator) {
-      // Map earphone click events (Play/Pause/Toggle) to trigger the photo capture
       navigator.mediaSession.setActionHandler('play', takePhoto);
       navigator.mediaSession.setActionHandler('pause', takePhoto);
       navigator.mediaSession.setActionHandler('previoustrack', takePhoto);
