@@ -36,7 +36,7 @@
     }
     canvas { display: none; }
 
-    /* Flash Screen Simulation Flash Effect */
+    /* Screen Flash Overlay */
     .screen-flash {
       position: absolute;
       top: 0;
@@ -47,10 +47,10 @@
       opacity: 0;
       pointer-events: none;
       z-index: 15;
-      transition: opacity 0.1s ease-out;
+      transition: opacity 0.08s ease-out;
     }
     .screen-flash.active {
-      opacity: 0.8;
+      opacity: 0.9;
     }
 
     .focus-ring {
@@ -247,7 +247,7 @@
     let capabilities = null;
     let audioCtx = null;
     let currentFacingMode = "environment";
-    let flashMode = 0; // 0: Off, 1: On, 2: Auto
+    let flashMode = 0; // 0: Off, 1: Flash ON (Strobe on capture), 2: Light Always-On
     let timerSetting = 0; // 0, 3, or 10 seconds
     let isCountingDown = false;
 
@@ -269,34 +269,40 @@
         track = activeStream.getVideoTracks()[0];
         capabilities = track.getCapabilities ? track.getCapabilities() : {};
 
+        // Reapply Always-On Light if it was active before flipping camera
+        if (flashMode === 2 && capabilities.torch) {
+          await track.applyConstraints({ advanced: [{ torch: true }] });
+        }
+
         status.innerText = "Ready • Press earbud to snap";
       } catch (err) {
         status.innerText = "Camera Error: " + err.message;
       }
     }
 
-    // 2. Flash Mode Cycling (Off -> On -> Auto)
-    flashBtn.onclick = () => {
+    // 2. Flash Mode Cycling (Off -> Flash ON -> Always-On Light)
+    flashBtn.onclick = async () => {
       flashMode = (flashMode + 1) % 3;
+      
+      // Clear existing torch state when switching modes
+      if (track && capabilities.torch) {
+        try { await track.applyConstraints({ advanced: [{ torch: false }] }); } catch (e) {}
+      }
+
       if (flashMode === 0) {
         flashBtn.innerText = "⚡ Flash: Off";
         flashBtn.classList.remove('active');
       } else if (flashMode === 1) {
         flashBtn.innerText = "⚡ Flash: ON";
         flashBtn.classList.add('active');
-      } else {
-        flashBtn.innerText = "⚡ Flash: Auto";
+      } else if (flashMode === 2) {
+        flashBtn.innerText = "🔦 Light: Always-On";
         flashBtn.classList.add('active');
+        if (track && capabilities.torch) {
+          try { await track.applyConstraints({ advanced: [{ torch: true }] }); } catch (e) {}
+        }
       }
     };
-
-    // Helper to fire actual hardware flash / torch pulse during capture if enabled
-    async function handleHardwareFlash(enable) {
-      if (!track || !capabilities.torch) return;
-      try {
-        await track.applyConstraints({ advanced: [{ torch: enable }] });
-      } catch (e) {}
-    }
 
     // Zoom & Brightness Sliders
     zoomSlider.oninput = async () => {
@@ -365,53 +371,77 @@
       }
     });
 
-    // 4. Authentic Synthesized Camera Snap Sound
-    function playCameraSnapSound() {
+    // 4. Authentic Multi-Stage DSLR Shutter Sound Synthesizer
+    function playBetterMidiShutterSound() {
       try {
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         if (audioCtx.state === 'suspended') audioCtx.resume();
 
         const now = audioCtx.currentTime;
 
-        // Layer 1: Mechanical Mirror/Click Thump
-        const osc = audioCtx.createOscillator();
-        const gainNode = audioCtx.createGain();
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(320, now);
-        osc.frequency.exponentialRampToValueAtTime(40, now + 0.04);
-        gainNode.gain.setValueAtTime(0.6, now);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
-        osc.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
-        osc.start(now);
-        osc.stop(now + 0.04);
+        // Stage 1: First Curtain / Mirror Up (Deep acoustic thud)
+        const osc1 = audioCtx.createOscillator();
+        const gain1 = audioCtx.createGain();
+        osc1.type = 'triangle';
+        osc1.frequency.setValueAtTime(140, now);
+        osc1.frequency.exponentialRampToValueAtTime(40, now + 0.04);
+        gain1.gain.setValueAtTime(0.7, now);
+        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+        osc1.connect(gain1);
+        gain1.connect(audioCtx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.04);
 
-        // Layer 2: Shutter Blade Iris Snap (White noise burst)
-        const bufferSize = audioCtx.sampleRate * 0.06; // 60ms snap
+        // Stage 2: Metallic Shutter Blade Click (Mid-High transient)
+        const osc2 = audioCtx.createOscillator();
+        const gain2 = audioCtx.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(950, now);
+        osc2.frequency.exponentialRampToValueAtTime(300, now + 0.03);
+        gain2.gain.setValueAtTime(0.4, now);
+        gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+        osc2.connect(gain2);
+        gain2.connect(audioCtx.destination);
+        osc2.start(now);
+        osc2.stop(now + 0.03);
+
+        // Stage 3: Second Curtain / Mirror Down (Slightly delayed mechanical clack at +0.07s)
+        const osc3 = audioCtx.createOscillator();
+        const gain3 = audioCtx.createGain();
+        osc3.type = 'triangle';
+        osc3.frequency.setValueAtTime(110, now + 0.07);
+        osc3.frequency.exponentialRampToValueAtTime(50, now + 0.11);
+        gain3.gain.setValueAtTime(0.5, now + 0.07);
+        gain3.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+        osc3.connect(gain3);
+        gain3.connect(audioCtx.destination);
+        osc3.start(now + 0.07);
+        osc3.stop(now + 0.11);
+
+        // Stage 4: Spring Mechanism Noise Burst (Textured metallic clatter)
+        const bufferSize = audioCtx.sampleRate * 0.12;
         const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
         const data = buffer.getChannelData(0);
         for (let i = 0; i < bufferSize; i++) {
           data[i] = Math.random() * 2 - 1;
         }
-
         const noise = audioCtx.createBufferSource();
         noise.buffer = buffer;
 
         const filter = audioCtx.createBiquadFilter();
         filter.type = 'bandpass';
-        filter.frequency.setValueAtTime(1800, now);
-        filter.Q.setValueAtTime(3, now);
+        filter.frequency.setValueAtTime(3200, now);
+        filter.Q.setValueAtTime(5, now);
 
         const noiseGain = audioCtx.createGain();
-        noiseGain.gain.setValueAtTime(0.7, now);
-        noiseGain.gain.exponentialRampToValueAtTime(0.01, now + 0.06);
+        noiseGain.gain.setValueAtTime(0.5, now);
+        noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
 
         noise.connect(filter);
         filter.connect(noiseGain);
         noiseGain.connect(audioCtx.destination);
-
         noise.start(now);
-        noise.stop(now + 0.06);
+        noise.stop(now + 0.12);
       } catch (e) {}
     }
 
@@ -442,18 +472,22 @@
     }
 
     async function executeCaptureSequence() {
-      // Trigger flash if enabled (On, or Auto trigger simulation)
-      const useFlash = (flashMode === 1);
-      if (useFlash) {
-        await handleHardwareFlash(true);
+      const isFlashOn = (flashMode === 1);
+
+      // If Flash ON is selected, turn on hardware torch with a proper ramp-up window
+      if (isFlashOn && track && capabilities.torch) {
+        try {
+          await track.applyConstraints({ advanced: [{ torch: true }] });
+          // Wait 100ms for Android hardware LED to achieve full brightness before exposure
+          await new Promise(r => setTimeout(r, 100));
+        } catch (e) {}
       }
 
-      // Visual screen blink flash effect
+      // Screen flash effect & rich multi-stage MIDI shutter sound
       screenFlash.classList.add('active');
-      setTimeout(() => screenFlash.classList.remove('active'), 100);
+      setTimeout(() => screenFlash.classList.remove('active'), 120);
 
-      // Play authentic mechanical snap sound
-      playCameraSnapSound();
+      playBetterMidiShutterSound();
 
       // Draw photo to canvas
       canvas.width = video.videoWidth;
@@ -462,8 +496,11 @@
       ctx.filter = video.style.filter || 'none';
       ctx.drawImage(video, 0, 0);
 
-      if (useFlash) {
-        await handleHardwareFlash(false);
+      // Turn off flash after exposure (unless Always-On Light mode is selected)
+      if (isFlashOn && track && capabilities.torch) {
+        try {
+          await track.applyConstraints({ advanced: [{ torch: false }] });
+        } catch (e) {}
       }
 
       const link = document.createElement('a');
